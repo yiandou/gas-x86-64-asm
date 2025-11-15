@@ -1,0 +1,65 @@
+{
+    "name": "gas-x86-64-asm",
+    "displayName": "GAS x86-64 Assembly (AT&T)",
+    "description": "Syntax highlighting for GNU Assembler (GAS) x86-64 assembly language using AT&T syntax.",
+    "version": "1.0.0",
+    "publisher": "yiandou",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "keywords": [
+        "assembly",
+        "asm",
+        "x86-64",
+        "x86_64",
+        "att",
+        "gas",
+        "gnu assembler"
+    ],
+    "main": "./out/extension.js",
+    "activationEvents": [
+        "onLanguage:gas-asm"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "gas-asm",
+                "aliases": [
+                    "GAS Assembly",
+                    "gas-asm",
+                    "GNU Assembly"
+                ],
+                "extensions": [
+                    ".s",
+                    ".S"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "gas-asm",
+                "scopeName": "source.gas-asm",
+                "path": "./syntaxes/gas-asm.tmLanguage.json"
+            }
+        ]
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./",
+        "pretest": "npm run compile && npm run lint",
+        "lint": "eslint src --ext ts"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.75.0",
+        "@types/node": "^16.x",
+        "@typescript-eslint/eslint-plugin": "^5.45.0",
+        "@typescript-eslint/parser": "^5.45.0",
+        "eslint": "^8.28.0",
+        "typescript": "^4.9.3"
+    }
+}

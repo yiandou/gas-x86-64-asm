@@ -1,0 +1,36 @@
+{
+    "name": "GAS x86-64 Assembly (AT&T)",
+    "scopeName": "source.gas-asm",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#preprocessor"
+        },
+        {
+            "include": "#labels"
+        },
+        {
+            "include": "#directives"
+        },
+        {
+            "include": "#instructions"
+        },
+        {
+            "include": "#registers"
+        },
+        {
+            "include": "#numbers"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#operators"
+        }
+    ],
+    "repository": {
+        "comments": {}
+    }
+}
