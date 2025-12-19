@@ -1,12 +1,20 @@
 {
     "name": "GAS x86-64 Assembly (AT&T)",
     "scopeName": "source.gas-asm",
+    "fileTypes": [
+        "s",
+        "S",
+        "gas-asm"
+    ],
     "patterns": [
         {
             "include": "#comments"
         },
         {
             "include": "#preprocessor"
+        },
+        {
+            "include": "#strings"
         },
         {
             "include": "#labels"
@@ -21,16 +29,410 @@
             "include": "#registers"
         },
         {
-            "include": "#numbers"
+            "include": "#immediates"
         },
         {
-            "include": "#strings"
+            "include": "#memory-operands"
         },
         {
             "include": "#operators"
         }
     ],
     "repository": {
-        "comments": {}
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.number-sign.gas-asm",
+                    "match": "#.*$"
+                },
+                {
+                    "name": "comment.block.gas-asm",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                },
+                {
+                    "name": "comment.line.double-slash.gas-asm",
+                    "match": "//.*$"
+                }
+            ]
+        },
+        "preprocessor": {
+            "patterns": [
+                {
+                    "name": "meta.preprocessor.gas-asm",
+                    "match": "^\\s*#\\s*(include|define|undef|ifdef|ifndef|if|elif|else|endif|error|warning|pragma|line)\\b.*$",
+                    "captures": {
+                        "1": {
+                            "name": "keyword.control.directive.preprocessor.gas-asm"
+                        }
+                    }
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.gas-asm",
+                    "begin": "\"",
+                    "end": "\"",
+                    "endCaptures": {
+                        "0": {
+                            "name": "punctuation.definition.string.end.gas-asm"
+                        }
+                    },
+                    "beginCaptures": {
+                        "0": {
+                            "name": "punctuation.definition.string.begin.gas-asm"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.gas-asm",
+                            "match": "\\\\."
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.single.gas-asm",
+                    "begin": "'",
+                    "end": "'",
+                    "endCaptures": {
+                        "0": {
+                            "name": "punctuation.definition.string.end.gas-asm"
+                        }
+                    },
+                    "beginCaptures": {
+                        "0": {
+                            "name": "punctuation.definition.string.begin.gas-asm"
+                        }
+                    },
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.gas-asm",
+                            "match": "\\\\."
+                        }
+                    ]
+                }
+            ]
+        },
+        "labels": {
+            "patterns": [
+                {
+                    "name": "entity.name.function.label.gas-asm",
+                    "match": "^\\s*([a-zA-Z_\\.][a-zA-Z0-9_\\.]*)\\s*:",
+                    "captures": {
+                        "1": {
+                            "name": "entity.name.label.gas-asm"
+                        }
+                    }
+                },
+                {
+                    "name": "entity.name.function.label.local.gas-asm",
+                    "match": "^\\s*([0-9]+)\\s*:",
+                    "captures": {
+                        "1": {
+                            "name": "entity.name.label.local.gas-asm"
+                        }
+                    }
+                }
+            ]
+        },
+        "directives": {
+            "patterns": [
+                {
+                    "name": "keyword.control.directive.section.gas-asm",
+                    "match": "\\.(text|data|bss|rodata|section|subsection|previous|pushsection|popsection|init|fini|ctors|dtors|tdata|tbss)\\b"
+                },
+                {
+                    "name": "keyword.control.directive.alignment.gas-asm",
+                    "match": "\\.(align|balign|p2align|p2alignw|p2alignl)\\b"
+                },
+                {
+                    "name": "keyword.control.directive.data.gas-asm",
+                    "match": "\\.(byte|2byte|4byte|8byte|word|short|hword|int|long|quad|octa|float|single|double|tfloat|ascii|asciz|string|string8|string16|string32|string64|zero|space|skip|fill|org|dc|ds|dcb|value)\\b"
+                },
+                {
+                    "name": "keyword.control.directive.symbol.gas-asm",
+                    "match": "\\.(globl|global|weak|local|comm|lcomm|equ|equiv|eqv|set|extern|type|size|hidden|protected|internal|visibility)\\b"
+                },
+                {
+                    "name": "keyword.control.directive.cfi.gas-asm",
+                    "match": "\\.(cfi_startproc|cfi_endproc|cfi_def_cfa|cfi_def_cfa_offset|cfi_def_cfa_register|cfi_offset|cfi_restore|cfi_undefined|cfi_same_value|cfi_remember_state|cfi_restore_state|cfi_return_column|cfi_signal_frame|cfi_window_save|cfi_escape|cfi_val_encoded_addr|cfi_label|cfi_sections|cfi_personality|cfi_lsda|cfi_val_offset|cfi_rel_offset|cfi_adjust_cfa_offset|cfi_register)\\b"
+                },
+                {
+                    "name": "keyword.control.directive.debug.gas-asm",
+                    "match": "\\.(file|ident|loc|loc_mark_labels|line|def|dim|endef|scl|tag|val)\\b"
+                },
+                {
+                    "name": "keyword.control.directive.macro.gas-asm",
+                    "match": "\\.(macro|endm|exitm|purgem|rept|endr|irp|irpc|ifc|ifnc|ifeq|ifne|ifge|ifgt|ifle|iflt|ifnotdef|ifdef|ifndef|if|elseif|else|endif|altmacro|noaltmacro)\\b"
+                },
+                {
+                    "name": "keyword.control.directive.misc.gas-asm",
+                    "match": "\\.(abort|err|error|fail|warning|print|include|incbin|func|endfunc|uleb128|sleb128|linkonce|symver|weakref|vtable_entry|vtable_inherit|gnu_attribute|attribute|code16|code16gcc|code32|code64)\\b"
+                }
+            ]
+        },
+        "instructions": {
+            "patterns": [
+                {
+                    "name": "keyword.mnemonic.data-transfer.gas-asm",
+                    "match": "\\b(mov|movb|movw|movl|movq|movabs|movabsq|movsx|movsxb|movsxw|movsxl|movsxd|movzx|movzb|movzw|movzl|lea|leaq|push|pushq|pop|popq|xchg|xchgb|xchgw|xchgl|xchgq)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.arithmetic.gas-asm",
+                    "match": "\\b(add|addb|addw|addl|addq|adc|adcb|adcw|adcl|adcq|sub|subb|subw|subl|subq|sbb|sbbb|sbbw|sbbl|sbbq|imul|imulb|imulw|imull|imulq|mul|mulb|mulw|mull|mulq|idiv|idivb|idivw|idivl|idivq|div|divb|divw|divl|divq|inc|incb|incw|incl|incq|dec|decb|decw|decl|decq|neg|negb|negw|negl|negq|cmp|cmpb|cmpw|cmpl|cmpq)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.logic.gas-asm",
+                    "match": "\\b(and|andb|andw|andl|andq|or|orb|orw|orl|orq|xor|xorb|xorw|xorl|xorq|not|notb|notw|notl|notq|test|testb|testw|testl|testq|bt|btb|btw|btl|btq|bts|btr|btc|bsf|bsr)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.shift.gas-asm",
+                    "match": "\\b(shl|shlb|shlw|shll|shlq|shr|shrb|shrw|shrl|shrq|sal|salb|salw|sall|salq|sar|sarb|sarw|sarl|sarq|rol|rolb|rolw|roll|rolq|ror|rorb|rorw|rorl|rorq|rcl|rcr|shld|shrd)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.control.gas-asm",
+                    "match": "\\b(jmp|jmpq|je|jz|jne|jnz|jg|jge|jl|jle|ja|jae|jb|jbe|jc|jnc|jo|jno|js|jns|jp|jpe|jnp|jpo|jcxz|jecxz|jrcxz|call|callq|ret|retq|retf|retn|leave|enter|loop|loope|loopz|loopne|loopnz)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.string.gas-asm",
+                    "match": "\\b(movs|movsb|movsw|movsl|movsq|cmps|cmpsb|cmpsw|cmpsl|cmpsq|scas|scasb|scasw|scasl|scasq|lods|lodsb|lodsw|lodsl|lodsq|stos|stosb|stosw|stosl|stosq|rep|repe|repz|repne|repnz)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.flag.gas-asm",
+                    "match": "\\b(stc|clc|cmc|std|cld|sti|cli|sahf|lahf|pushf|pushfq|popf|popfq)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.misc.gas-asm",
+                    "match": "\\b(nop|nopw|nopl|hlt|wait|pause|lock|int|int3|syscall|sysenter|sysexit|sysret|cpuid|rdtsc|rdtscp)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.setcc.gas-asm",
+                    "match": "\\b(sete|setz|setne|setnz|setg|setge|setl|setle|seta|setae|setb|setbe|setc|setnc|seto|setno|sets|setns|setp|setpe|setnp|setpo)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.cmov.gas-asm",
+                    "match": "\\b(cmove|cmovz|cmovne|cmovnz|cmovg|cmovge|cmovl|cmovle|cmova|cmovae|cmovb|cmovbe|cmovc|cmovnc|cmovo|cmovno|cmovs|cmovns|cmovp|cmovpe|cmovnp|cmovpo)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.bmi.gas-asm",
+                    "match": "\\b(andn|andnl|andnq|bextr|bextrl|bextrq|blsi|blsil|blsiq|blsmsk|blsmskl|blsmskq|blsr|blsrl|blsrq|lzcnt|lzcntl|lzcntq|tzcnt|tzcntl|tzcntq|popcnt|popcntl|popcntq|bzhi|bzhil|bzhiq|pdep|pdepl|pdepq|pext|pextl|pextq)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.sse.gas-asm",
+                    "match": "\\b(movaps|movups|movss|movsd|movapd|movupd|movdqa|movdqu|addps|addss|addpd|addsd|subps|subss|subpd|subsd|mulps|mulss|mulpd|mulsd|divps|divss|divpd|divsd|sqrtps|sqrtss|sqrtpd|sqrtsd|maxps|maxss|maxpd|maxsd|minps|minss|minpd|minsd|andps|andpd|orps|orpd|xorps|xorpd|paddb|paddw|paddd|paddq|psubb|psubw|psubd|psubq|pmullw|pmuludq|pand|pandn|por|pxor|psllw|pslld|psllq|psrlw|psrld|psrlq|psraw|psrad|pcmpeqb|pcmpeqw|pcmpeqd)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.avx.gas-asm",
+                    "match": "\\b(vaddps|vaddpd|vaddss|vaddsd|vsubps|vsubpd|vsubss|vsubsd|vmulps|vmulpd|vmulss|vmulsd|vdivps|vdivpd|vdivss|vdivsd|vmovaps|vmovapd|vmovups|vmovupd|vmovdqa|vmovdqu|vxorps|vxorpd|vzeroall|vzeroupper)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.fpu.gas-asm",
+                    "match": "\\b(fadd|faddp|fiadd|fsub|fsubp|fsubr|fsubrp|fisub|fisubr|fmul|fmulp|fimul|fdiv|fdivp|fdivr|fdivrp|fidiv|fidivr|fsqrt|fabs|fchs|fld|fld1|fldz|fldpi|fst|fstp|fxch|fcom|fcomp|fcompp|fsin|fcos|fsincos)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.mmx.gas-asm",
+                    "match": "\\b(movd|movq|pack(sswb|ssdw|uswb|usdw)|padd([bwd]|s[bw]|us[bw])|psub([bwd]|s[bw]|us[bw])|p(and|andn|or|xor)|pcmpeq[bwd]|pcmpgt[bwd]|p(maddwd|mulhw|mullw)|ps(ll|rl|ra)[wdq]|punpck[hl](bw|wd|dq)|emms)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.sse.gas-asm",
+                    "match": "\\b(mov(ap|up|hl|lh|lp|hp|msk|nt)s|movs[sd]|add[ps]s|sub[ps]s|mul[ps]s|div[ps]s|sqrt[ps]s|rcp[ps]s|rsqrt[ps]s|max[ps]s|min[ps]s|cmp[ps]s|u?comis[sd]|and(n)?ps|x?orps|shufps|unpckhps|unpcklps|cvt(ss2sd|sd2ss|si2ss|si2sd|ss2si|sd2si|tt?ss2si|tt?sd2si|ps2pi|pi2ps|t?ps2dq|dq2ps)|movnti|maskmovq|movntq|prefetch[tnw012]|sfence|ldmxcsr|stmxcsr|clflush)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.sse2.gas-asm",
+                    "match": "\\b(mov(ap|up|hl|lh|lp|hp|msk|nt)d|add[ps]d|sub[ps]d|mul[ps]d|div[ps]d|sqrt[ps]d|max[ps]d|min[ps]d|cmp[ps]d|u?comis[d]|and(n)?pd|x?orpd|shufpd|unpckhpd|unpcklpd|cvt(ps2pd|pd2ps|pd2dq|tt?pd2dq|dq2pd|pd2pi|pi2pd)|mov(dq[au]|q2dq|dq2q)|pshufd|pshuf[hl]w|pshufb|punpck[hl](bw|wd|dq|qdq)|pack(sswb|ssdw|uswb|usdw)|padd([bwdq]|s[bw]|us[bw])|psub([bwdq]|s[bw]|us[bw])|pmul(huw|hw|lw|udq|dq|ld)|pmadd(wd|ubsw)|psad(bw)|pavg[bw]|p(min|max)(ub|sw|uw|ud|sb|sd)|pcmpeq[bwdq]|pcmpgt[bwdq]|ps(ll|rl|ra)[wdq]|pslldq|psrldq|pand(n)?|px?or|maskmovdqu|movntp[di]|movnt(dq|il)|lfence|mfence|pause)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.sse3.gas-asm",
+                    "match": "\\b(fisttp[ls]?|haddp[sd]|hsubp[sd]|addsubp[sd]|movsldup|movshdup|movddup|lddqu|monitor|mwait)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.ssse3.gas-asm",
+                    "match": "\\b(psign[bwd]|pshufb|pmulhrsw|pmaddubsw|phsub[wd]|phsubs?w|phadd[wd]|phadds?w|palignr|pabs[bwd])\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.sse4.gas-asm",
+                    "match": "\\b(pblendvb|pblendw|blendvp[sd]|blendp[sd]|pmins[bd]|pmaxs[bd]|pmin[uw][wd]|pmax[uw][wd]|pmovsxb[wdq]|pmovsxw[dq]|pmovsxdq|pmovzxb[wdq]|pmovzxw[dq]|pmovzxdq|pmulld|pmuldq|pcmpeqq|packusdw|pmovsx|pmovzx|ptest|pcmpgtq|pcmpestrm|pcmpestri|pcmpistrm|pcmpistri|roundp[sd]|rounds[sd]|dpps|dppd|mpsadbw|phminposuw|pmovuswb|pmovusdb|pmovusdw|pmovusqb|pmovusqd|pmovusqw|extractps|insertps|pinsrb|pinsrd|pinsrq|pextrb|pextrd|pextrq|pmovsxbw|popcnt|crc32[bwlq]?)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.avx.gas-asm",
+                    "match": "\\b(v(add|sub|mul|div|max|min|sqrt|rsqrt|rcp)[ps][sd]|v(and|andn|or|xor)p[sd]|vblendp[sd]|vblendvp[sd]|vbroadcast(ss|sd|f128)|vcmp[ps][sd]|v(u)?comis[sd]|vcvt(dq2p[sd]|p[sd]2dq|tt?p[sd]2dq|ps2pd|pd2ps|s[sd]2s[sd]|si2s[sd]|s[sd]2si|tt?s[sd]2si)|vdpp[sd]|vextractf128|vextractps|vhaddp[sd]|vhsubp[sd]|vinsertf128|vinsertps|vlddqu|vldmxcsr|vmaskmovp[sd]|vmovap[sd]|vmovup[sd]|vmovs[sd]|vmov[hl]p[sd]|vmovmskp[sd]|vmovntp[sd]|vmovdq[au]|vmovq|vmovddup|vmovs[hl]dup|vperm2f128|vpermilp[sd]|vroundp[sd]|vrounds[sd]|vshufp[sd]|vstmxcsr|vtestp[sd]|vunpck[hl]p[sd]|vzeroall|vzeroupper)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.avx2.gas-asm",
+                    "match": "\\b(vpabs[bwd]|vpadd([bwdq]|s[bw]|us[bw])|vpsub([bwdq]|s[bw]|us[bw])|vpmul(huw|hw|lw|udq|dq|ld)|vpmadd(wd|ubsw)|vpsad(bw)|vpavg[bw]|vp(min|max)(ub|uw|ud|sb|sw|sd)|vpcmpeq[bwdq]|vpcmpgt[bwdq]|vps(ll|rl|ra)[wdq]|vpslldq|vpsrldq|vps(ll|rl)v[dq]|vpsrav[dq]|vpand(n)?|vpx?or|vpack(sswb|ssdw|uswb|usdw)|vpunpck[hl](bw|wd|dq|qdq)|vpshuf[bd]|vpshuf[hl]w|vpsign[bwd]|vpalignr|vpblend(vb|w|d)|vpbroadcast[bwdq]|vpbroadcasti128|vpermd|vpermps|vpermq|vpermpd|vperm2i128|vpmaskmov[dq]|vpmov(sx|zx)(b[wdq]|w[dq]|dq)|vpmovsxb[wdq]|vpmovsxw[dq]|vpmovsxdq|vpmovzxb[wdq]|vpmovzxw[dq]|vpmovzxdq|vptest|vextracti128|vinserti128|vgather(d|q)p[sd]|vpgather(d|q)[dq]|vmaskmovp[sd])\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.avx512.gas-asm",
+                    "match": "\\b(valignd|valignq|vblendmp[sd]|vbroadcast[fi](32x[248]|64x[24])|vcompress(p[sd]|s[sd])|vcvt(p[sd]2[uq]qq?|p[sd]2udq|[uq]qq2p[sd]|udq2p[sd]|usi2s[sd]|s[sd]2usi|tt?s[sd]2usi|tt?p[sd]2[uq]qq?|tt?p[sd]2udq)|vdbpsadbw|vexpandp[sd]|vextract[fi](32x[48]|64x[24])|vfixupimm(p[sd]|s[sd])|vfpclass(p[sd]|s[sd])|vgather(pf[01][dq]p[sd])|vgetexp(p[sd]|s[sd])|vgetmant(p[sd]|s[sd])|vinsert[fi](32x[48]|64x[24])|vmovdq(a(32|64)|u(8|16|32|64))|vpabs[qd]|vpandn?[dq]|vpblendm[bwdq]|vpbroadcastm[bwd]2[qd]|vpcmp[bwdq]|vpcmpu[bwdq]|vpcompress[dq]|vpconflict[dq]|vperm[bwi]2[bwdqps]|vpermt2[bwdqps]|vpexpand[dq]|vpgather[dq][dq]|vplzcnt[dq]|vpmadd52[hl]uq|vpmax(s|u)[qd]|vpmin(s|u)[qd]|vpmov[dqwb]2m|vpmov([qd][bwd]|wb|[su]s?[qd][bwd]|[su]s?wb)|vpmovm2[bwdq]|vpmul(t?[hl]q|lq)|vpmultishiftqb|vpor[dq]|vprold|vprolq|vprolvd|vprolvq|vprord|vprorq|vprorvd|vprorvq|vpscatter[dq][dq]|vpsllv[wdq]|vpsravw|vpsrav[qdw]|vpsrlv[wdq]|vpternlog[dq]|vptestm[bwdq]|vptestnm[bwdq]|vpxor[dq]|vrange(p[sd]|s[sd])|vrcp(14|28)(p[sd]|s[sd])|vreduce(p[sd]|s[sd])|vrndscale(p[sd]|s[sd])|vrsqrt(14|28)(p[sd]|s[sd])|vscalef(p[sd]|s[sd])|vscatter(d|q)p[sd]|vscatterpf[01][dq]p[sd]|vshuff(32x4|64x2)|vshufi(32x4|64x2)|k(add|and|andn|mov|not|or|ortest|shift[lr]|test|unpck|xnor|xor)[bwdq])\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.bmi.gas-asm",
+                    "match": "\\b(andn[lq]?|bextr[lq]?|blsi[lq]?|blsmsk[lq]?|blsr[lq]?|bzhi[lq]?|lzcnt[lq]?|tzcnt[lq]?|mulx[lq]?|pdep[lq]?|pext[lq]?|rorx[lq]?|sarx[lq]?|shlx[lq]?|shrx[lq]?)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.other-ext.gas-asm",
+                    "match": "\\b(aes(enc|enclast|dec|declast|imc|keygenassist)|sha1(msg[12]|nexte|rnds4)|sha256(msg[12]|rnds2)|pclmul(l?[hl]q[hl]?qdq|qdq)|gf2p8(affineinvqb|affineqb|mulb)|vgf2p8(affineinvqb|affineqb|mulb)|vaes(enc|enclast|dec|declast)|vpclmul(l?[hl]q[hl]?qdq|qdq)|rdrand|rdseed|xbegin|xend|xabort|xtest|clwb|clflushopt|clzero|monitorx|mwaitx|rdpid|movdiri|movdir64b|enqcmd|enqcmds|serialize|xsusldtrk|xresldtrk|umonitor|umwait|tpause|pconfig|wbnoinvd)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.system.gas-asm",
+                    "match": "\\b(lgdt|sgdt|lidt|sidt|lldt|sldt|ltr|str|lmsw|smsw|clts|arpl|lar|lsl|verr|verw|invd|wbinvd|invlpg|invpcid|swapgs|rdfsbase|rdgsbase|wrfsbase|wrgsbase|clac|stac|xsave(64|c|opt|s)?|xrstor(64|s)?|cpuid|rdtsc|rdtscp|rdpmc|rdmsr|wrmsr|xgetbv|xsetbv)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.vmx.gas-asm",
+                    "match": "\\b(vmcall|vmclear|vmfunc|vmlaunch|vmresume|vmptrld|vmptrst|vmread|vmwrite|vmxoff|vmxon|invept|invvpid)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.svm.gas-asm",
+                    "match": "\\b(clgi|stgi|skinit|vmload|vmmcall|vmrun|vmsave)\\b"
+                },
+                {
+                    "name": "keyword.mnemonic.amx.gas-asm",
+                    "match": "\\b(ldtilecfg|sttilecfg|tileloadd(t1)?|tilestored|tilerelease|tilezero|tdpb(f16ps|ssd|sud|usd|uud))\\b"
+                }
+            ]
+        },
+        "registers": {
+            "patterns": [
+                {
+                    "name": "variable.language.register.gpr.gas-asm",
+                    "match": "%r(ax|bx|cx|dx|si|di|bp|sp|ip|8|9|1[0-5])[dwb]?\\b"
+                },
+                {
+                    "name": "variable.language.register.gpr.gas-asm",
+                    "match": "%e(ax|bx|cx|dx|si|di|bp|sp|ip)\\b|%r(8|9|1[0-5])d\\b"
+                },
+                {
+                    "name": "variable.language.register.gpr.gas-asm",
+                    "match": "%(ax|bx|cx|dx|si|di|bp|sp|ip)\\b|%r(8|9|1[0-5])w\\b"
+                },
+                {
+                    "name": "variable.language.register.gpr.gas-asm",
+                    "match": "%([abcd][hl]|[sd]il|[sb]pl|r(8|9|1[0-5])b)\\b"
+                },
+                {
+                    "name": "variable.language.register.segment.gas-asm",
+                    "match": "%(cs|ds|es|fs|gs|ss)\\b"
+                },
+                {
+                    "name": "variable.language.register.control.gas-asm",
+                    "match": "%cr[0-8]\\b"
+                },
+                {
+                    "name": "variable.language.register.debug.gas-asm",
+                    "match": "%dr[0-7]\\b"
+                },
+                {
+                    "name": "variable.language.register.test.gas-asm",
+                    "match": "%tr[3-7]\\b"
+                },
+                {
+                    "name": "variable.language.register.fpu.gas-asm",
+                    "match": "%st(\\([0-7]\\))?\\b"
+                },
+                {
+                    "name": "variable.language.register.mmx.gas-asm",
+                    "match": "%mm[0-7]\\b"
+                },
+                {
+                    "name": "variable.language.register.xmm.gas-asm",
+                    "match": "%xmm([0-9]|1[0-5]|2[0-9]|3[01])\\b"
+                },
+                {
+                    "name": "variable.language.register.ymm.gas-asm",
+                    "match": "%ymm([0-9]|1[0-5]|2[0-9]|3[01])\\b"
+                },
+                {
+                    "name": "variable.language.register.zmm.gas-asm",
+                    "match": "%zmm([0-9]|1[0-5]|2[0-9]|3[01])\\b"
+                },
+                {
+                    "name": "variable.language.register.mask.gas-asm",
+                    "match": "%k[0-7]\\b"
+                },
+                {
+                    "name": "variable.language.register.bound.gas-asm",
+                    "match": "%bnd[0-3]\\b"
+                },
+                {
+                    "name": "variable.language.register.tmm.gas-asm",
+                    "match": "%tmm([0-7])\\b"
+                },
+                {
+                    "name": "variable.language.register.flags.gas-asm",
+                    "match": "%(e?flags|r?flags)\\b"
+                }
+            ]
+        },
+        "immediates": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.hex.gas-asm",
+                    "match": "\\$-?0[xX][0-9a-fA-F]+\\b"
+                },
+                {
+                    "name": "constant.numeric.binary.gas-asm",
+                    "match": "\\$-?0[bB][01]+\\b"
+                },
+                {
+                    "name": "constant.numeric.octal.gas-asm",
+                    "match": "\\$-?0[0-7]+\\b"
+                },
+                {
+                    "name": "constant.numeric.float.gas-asm",
+                    "match": "\\$-?[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+                },
+                {
+                    "name": "constant.numeric.decimal.gas-asm",
+                    "match": "\\$-?[0-9]+\\b"
+                }
+            ]
+        },
+        "memory-operands": {
+            "patterns": [
+                {
+                    "name": "meta.memory-operand.gas-asm",
+                    "match": "(-?[0-9]+)?\\((%[a-z0-9]+)(,\\s*%[a-z0-9]+)?(,\\s*[1248])?\\)",
+                    "captures": {
+                        "1": {
+                            "name": "constant.numeric.displacement.gas-asm"
+                        },
+                        "2": {
+                            "name": "variable.language.register.base.gas-asm"
+                        }
+                    }
+                },
+                {
+                    "name": "meta.rip-relative.gas-asm",
+                    "match": "([a-zA-Z_][a-zA-Z0-9_]*)\\(%rip\\)",
+                    "captures": {
+                        "1": {
+                            "name": "entity.name.label.gas-asm"
+                        }
+                    }
+                }
+            ]
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.arithmetic.gas-asm",
+                    "match": "[+\\-*/&|^~]|<<|>>"
+                },
+                {
+                    "name": "keyword.operator.addressing.gas-asm",
+                    "match": "[@$%]"
+                },
+                {
+                    "name": "punctuation.separator.gas-asm",
+                    "match": "[,:]"
+                },
+                {
+                    "name": "punctuation.section.parens.gas-asm",
+                    "match": "[()]"
+                }
+            ]
+        }
     }
 }

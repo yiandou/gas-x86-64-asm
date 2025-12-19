@@ -1,0 +1,112 @@
+{
+    "comments": {
+        "lineComment": {
+            "comment": "#"
+        },
+        "blockComment": [
+            "/*",
+            "*/"
+        ]
+    },
+    "brackets": [
+        [
+            "(",
+            ")"
+        ],
+        [
+            "[",
+            "]"
+        ],
+        [
+            "{",
+            "}"
+        ],
+        [
+            "<",
+            ">"
+        ]
+    ],
+    "autoClosingPairs": [
+        {
+            "open": "(",
+            "close": ")"
+        },
+        {
+            "open": "[",
+            "close": "]"
+        },
+        {
+            "open": "{",
+            "close": "}"
+        },
+        {
+            "open": "\"",
+            "close": "\"",
+            "notIn": [
+                "string",
+                "comment"
+            ]
+        },
+        {
+            "open": "'",
+            "close": "'",
+            "notIn": [
+                "string",
+                "comment"
+            ]
+        },
+        {
+            "open": "/*",
+            "close": "*/",
+            "notIn": [
+                "string"
+            ]
+        }
+    ],
+    "surroundingPairs": [
+        [
+            "(",
+            ")"
+        ],
+        [
+            "[",
+            "]"
+        ],
+        [
+            "{",
+            "}"
+        ],
+        [
+            "<",
+            ">"
+        ],
+        [
+            "\"",
+            "\""
+        ],
+        [
+            "'",
+            "'"
+        ]
+    ],
+    "folding": {
+        "markers": {
+            "start": "^\\s*#\\s*region\\b",
+            "end": "^\\s*#\\s*endregion\\b"
+        }
+    },
+    "wordPattern": "[-?\\d+\\.\\d\\w*]|([^\\`\\~\\!\\@\\%\\^\\&\\*\\(\\)\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)",
+    "indentationRules": {
+        "increaseIndentPattern": "^\\s*[a-zA-Z_][a-zA-Z0-9_]*:\\s*$",
+        "decreaseIndentPattern": "^\\s*(ret[qnf]?|leave|jmp|j[abgl]?e?|jn[abgl]?e?|j[cosz]|jn[cosz]|jp[eo]?|jnp[eo]?)\\b"
+    },
+    "onEnterRules": [
+        {
+            "beforeText": "^\\s*#.*$",
+            "action": {
+                "indent": "none",
+                "appendText": "# "
+            }
+        }
+    ]
+}

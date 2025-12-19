@@ -1,0 +1,116 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "npm",
+            "script": "watch",
+            "problemMatcher": {
+                "owner": "typescript",
+                "applyTo": "allDocuments",
+                "fileLocation": "relative",
+                "pattern": {
+                    "regexp": "^([^\\s].*)[\\(:](\\d+)[,:](\\d+)(?:\\):|:)\\s+(error|warning|info)\\s+(TS\\d+)\\s*:\\s*(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "code": 5,
+                    "message": 6
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^\\s*\\d{1,2}:\\d{1,2}:\\d{1,2}(?: AM| PM)? - File change detected\\. Starting incremental compilation\\.\\.\\.$",
+                    "endsPattern": "^\\s*\\d{1,2}:\\d{1,2}:\\d{1,2}(?: AM| PM)? - (?:Compilation complete\\.|Found \\d+ errors?\\.) Watching for file changes\\.$"
+                }
+            },
+            "isBackground": true,
+            "presentation": {
+                "reveal": "never",
+                "panel": "dedicated",
+                "clear": false
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "label": "npm: watch",
+            "detail": "tsc -watch -p ./"
+        },
+        {
+            "type": "npm",
+            "script": "compile",
+            "problemMatcher": {
+                "owner": "typescript",
+                "applyTo": "allDocuments",
+                "fileLocation": "relative",
+                "pattern": {
+                    "regexp": "^([^\\s].*)[\\(:](\\d+)[,:](\\d+)(?:\\):|:)\\s+(error|warning|info)\\s+(TS\\d+)\\s*:\\s*(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "code": 5,
+                    "message": 6
+                }
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared",
+                "clear": true
+            },
+            "group": "build",
+            "label": "npm: compile",
+            "detail": "tsc -p ./"
+        },
+        {
+            "type": "shell",
+            "command": "npm",
+            "args": [
+                "run",
+                "lint"
+            ],
+            "problemMatcher": {
+                "owner": "eslint",
+                "applyTo": "allDocuments",
+                "fileLocation": "relative",
+                "pattern": {
+                    "regexp": "^([^\\s].*?)\\((\\d+),(\\d+)\\):\\s+(error|warning|info)\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "label": "npm: lint",
+            "detail": "eslint src --ext ts"
+        },
+        {
+            "type": "npm",
+            "script": "clean",
+            "label": "npm: clean",
+            "detail": "Clean build artifacts",
+            "presentation": {
+                "reveal": "silent"
+            }
+        },
+        {
+            "type": "shell",
+            "command": "vsce",
+            "args": [
+                "package"
+            ],
+            "label": "Package Extension",
+            "detail": "Create .vsix package",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

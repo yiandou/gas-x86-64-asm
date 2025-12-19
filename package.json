@@ -24,6 +24,31 @@
         "onLanguage:gas-asm"
     ],
     "contributes": {
+        "configuration": {
+            "title": "GAS Assembly",
+            "properties": {
+                "gas-asm.performance.targetCPU": {
+                    "type": "string",
+                    "default": "skylake",
+                    "description": "Target CPU microarchitecture for performance analysis"
+                },
+                "gas-asm.enableDeadCodeDetection": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable dead code detection (warnings for unreachable code)"
+                }
+            }
+        },
+        "commands": [
+            {
+                "command": "gas-asm.selectTargetCpu",
+                "title": "GAS Assembly: Select Target CPU"
+            },
+            {
+                "command": "gas-asm.toggleDeadCodeDetection",
+                "title": "GAS Assembly: Toggle Dead Code Detection"
+            }
+        ],
         "languages": [
             {
                 "id": "gas-asm",
