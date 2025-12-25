@@ -281,6 +281,10 @@ exports.instructionDatabase = new Map([
                 }
             ]
         }],
+    ['imulb', { description: 'Signed multiply bytes', operands: 'src8 [,dest8] [,imm8]', category: 'Arithmetic', flags: 'OF,CF' }],
+    ['imulw', { description: 'Signed multiply words', operands: 'src16 [,dest16] [,imm16]', category: 'Arithmetic', flags: 'OF,CF' }],
+    ['imull', { description: 'Signed multiply longs', operands: 'src32 [,dest32] [,imm32]', category: 'Arithmetic', flags: 'OF,CF' }],
+    ['imulq', { description: 'Signed multiply quads', operands: 'src64 [,dest64] [,imm32]', category: 'Arithmetic', flags: 'OF,CF' }],
     ['mul', {
             description: 'Unsigned multiply',
             operands: 'src',
@@ -293,6 +297,10 @@ exports.instructionDatabase = new Map([
                 'raptorlake': { latency: 3, throughput: 0.5, ports: ['p16'], sizeBytes: 3, category: 'moderate' }
             }
         }],
+    ['mulb', { description: 'Unsigned multiply bytes', operands: 'src8', category: 'Arithmetic', flags: 'OF,CF' }],
+    ['mulw', { description: 'Unsigned multiply words', operands: 'src16', category: 'Arithmetic', flags: 'OF,CF' }],
+    ['mull', { description: 'Unsigned multiply longs', operands: 'src32', category: 'Arithmetic', flags: 'OF,CF' }],
+    ['mulq', { description: 'Unsigned multiply quads', operands: 'src64', category: 'Arithmetic', flags: 'OF,CF' }],
     ['idiv', {
             description: 'Signed divide',
             operands: 'divisor',
@@ -349,6 +357,10 @@ exports.instructionDatabase = new Map([
                 }
             ]
         }],
+    ['divb', { description: 'Unsigned divide bytes', operands: 'divisor8', category: 'Arithmetic' }],
+    ['divw', { description: 'Unsigned divide words', operands: 'divisor16', category: 'Arithmetic' }],
+    ['divl', { description: 'Unsigned divide longs', operands: 'divisor32', category: 'Arithmetic' }],
+    ['divq', { description: 'Unsigned divide quads', operands: 'divisor64', category: 'Arithmetic' }],
     ['inc', {
             description: 'Increment by 1',
             operands: 'dest',
@@ -435,6 +447,21 @@ exports.instructionDatabase = new Map([
                 'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 3, category: 'optimal' }
             }
         }],
+    ['andb', { description: 'Bitwise AND bytes', operands: 'src8, dest8', category: 'Logic', flags: 'SF,ZF,PF (OF=CF=0)' }],
+    ['andw', { description: 'Bitwise AND words', operands: 'src16, dest16', category: 'Logic', flags: 'SF,ZF,PF (OF=CF=0)' }],
+    ['andl', { description: 'Bitwise AND longs', operands: 'src32, dest32', category: 'Logic', flags: 'SF,ZF,PF (OF=CF=0)' }],
+    ['andq', {
+            description: 'Bitwise AND (64-bit)',
+            operands: 'src64, dest64',
+            category: 'Logic',
+            flags: 'SF,ZF,PF (OF=CF=0)',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' }
+            }
+        }],
     ['or', {
             description: 'Bitwise OR',
             operands: 'src, dest',
@@ -445,6 +472,21 @@ exports.instructionDatabase = new Map([
                 'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 3, category: 'optimal' },
                 'alderlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 3, category: 'optimal' },
                 'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['orb', { description: 'Bitwise OR bytes', operands: 'src8, dest8', category: 'Logic', flags: 'SF,ZF,PF (OF=CF=0)' }],
+    ['orw', { description: 'Bitwise OR words', operands: 'src16, dest16', category: 'Logic', flags: 'SF,ZF,PF (OF=CF=0)' }],
+    ['orl', { description: 'Bitwise OR longs', operands: 'src32, dest32', category: 'Logic', flags: 'SF,ZF,PF (OF=CF=0)' }],
+    ['orq', {
+            description: 'Bitwise OR (64-bit)',
+            operands: 'src64, dest64',
+            category: 'Logic',
+            flags: 'SF,ZF,PF (OF=CF=0)',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' }
             }
         }],
     ['xor', {
@@ -491,9 +533,65 @@ exports.instructionDatabase = new Map([
                 }
             ]
         }],
+    ['xorq', {
+            description: 'Bitwise XOR (64-bit)',
+            operands: 'src64, dest64',
+            category: 'Logic',
+            flags: 'SF,ZF,PF (OF=CF=0)',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 4, category: 'optimal' }
+            },
+        }],
     ['not', {
             description: 'One\'s complement (bitwise NOT)',
             operands: 'dest',
+            category: 'Logic',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 2, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' }
+            }
+        }],
+    ['notb', {
+            description: 'One\'s complement (bitwise NOT) byte',
+            operands: 'dest8',
+            category: 'Logic',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 2, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' }
+            }
+        }],
+    ['notw', {
+            description: 'One\'s complement (bitwise NOT) word',
+            operands: 'dest16',
+            category: 'Logic',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 2, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' }
+            }
+        }],
+    ['notl', {
+            description: 'One\'s complement (bitwise NOT) long',
+            operands: 'dest32',
+            category: 'Logic',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 2, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' }
+            }
+        }],
+    ['notq', {
+            description: 'One\'s complement (bitwise NOT) 64-bit',
+            operands: 'dest64',
             category: 'Logic',
             performance: {
                 'skylake': { latency: 1, throughput: 0.25, ports: ['p0156'], sizeBytes: 2, category: 'optimal' },
@@ -559,6 +657,54 @@ exports.instructionDatabase = new Map([
                 }
             ]
         }],
+    ['shlb', {
+            description: 'Shift left (logical) byte',
+            operands: 'count, dest8',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['shlw', {
+            description: 'Shift left (logical) word',
+            operands: 'count, dest16',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['shll', {
+            description: 'Shift left (logical) long (32-bit)',
+            operands: 'count, dest32',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['shlq', {
+            description: 'Shift left (logical) 64-bit',
+            operands: 'count, dest64',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
+            }
+        }],
     ['shr', {
             description: 'Shift right (logical)',
             operands: 'count, dest',
@@ -569,6 +715,54 @@ exports.instructionDatabase = new Map([
                 'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
                 'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
                 'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['shrb', {
+            description: 'Shift right (logical) byte',
+            operands: 'count, dest8',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['shrw', {
+            description: 'Shift right (logical) word',
+            operands: 'count, dest16',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['shrl', {
+            description: 'Shift right (logical) long (32-bit)',
+            operands: 'count, dest32',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF ,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['shrq', {
+            description: 'Shift right (logical) 64-bit',
+            operands: 'count, dest64',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
             }
         }],
     ['sal', {
@@ -583,6 +777,54 @@ exports.instructionDatabase = new Map([
                 'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
             }
         }],
+    ['salb', {
+            description: 'Shift arithmetic left (byte)',
+            operands: 'count, dest8',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['salw', {
+            description: 'Shift arithmetic left (word)',
+            operands: 'count, dest16',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['sall', {
+            description: 'Shift arithmetic left (long/32-bit)',
+            operands: 'count, dest32',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['salq', {
+            description: 'Shift arithmetic left (64-bit)',
+            operands: 'count, dest64',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
+            }
+        }],
     ['sar', {
             description: 'Shift arithmetic right (sign extension)',
             operands: 'count, dest',
@@ -593,6 +835,54 @@ exports.instructionDatabase = new Map([
                 'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
                 'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
                 'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['sarb', {
+            description: 'Shift arithmetic right (byte)',
+            operands: 'count, dest8',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['sarw', {
+            description: 'Shift arithmetic right (word)',
+            operands: 'count, dest16',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['sarl', {
+            description: 'Shift arithmetic right (long/32-bit)',
+            operands: 'count, dest32',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['sarq', {
+            description: 'Shift arithmetic right (64-bit)',
+            operands: 'count, dest64',
+            category: 'Shift/Rotate',
+            flags: 'OF,SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
             }
         }],
     ['rol', {
@@ -607,6 +897,54 @@ exports.instructionDatabase = new Map([
                 'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
             }
         }],
+    ['rolb', {
+            description: 'Rotate left byte',
+            operands: 'count, dest8',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['rolw', {
+            description: 'Rotate left word',
+            operands: 'count, dest16',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['roll', {
+            description: 'Rotate left long (32-bit)',
+            operands: 'count, dest32',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['rolq', {
+            description: 'Rotate left 64-bit',
+            operands: 'count, dest64',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
+            }
+        }],
     ['ror', {
             description: 'Rotate right',
             operands: 'count, dest',
@@ -617,6 +955,54 @@ exports.instructionDatabase = new Map([
                 'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
                 'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
                 'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['rorb', {
+            description: 'Rotate right byte',
+            operands: 'count, dest8',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['rorw', {
+            description: 'Rotate right word',
+            operands: 'count, dest16',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['rorl', {
+            description: 'Rotate right long (32-bit)',
+            operands: 'count, dest32',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+            }
+        }],
+    ['rorq', {
+            description: 'Rotate right 64-bit',
+            operands: 'count, dest64',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+                'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+                'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
             }
         }],
     ['rcl', {
@@ -631,6 +1017,54 @@ exports.instructionDatabase = new Map([
                 'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' }
             }
         }],
+    ['rclb', {
+            description: 'Rotate through carry left byte',
+            operands: 'count, dest8',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 3, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' }
+            }
+        }],
+    ['rclw', {
+            description: 'Rotate through carry left word',
+            operands: 'count, dest16',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 3, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' }
+            }
+        }],
+    ['rcll', {
+            description: 'Rotate through carry left long (32-bit)',
+            operands: 'count, dest32',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 3, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' }
+            }
+        }],
+    ['rclq', {
+            description: 'Rotate through carry left 64-bit',
+            operands: 'count, dest64',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
     ['rcr', {
             description: 'Rotate through carry right',
             operands: 'count, dest',
@@ -641,6 +1075,54 @@ exports.instructionDatabase = new Map([
                 'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 3, category: 'moderate' },
                 'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
                 'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' }
+            }
+        }],
+    ['rcrb', {
+            description: 'Rotate through carry right byte',
+            operands: 'count, dest8',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 3, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' }
+            }
+        }],
+    ['rcrw', {
+            description: 'Rotate through carry right word',
+            operands: 'count, dest16',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 3, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' }
+            }
+        }],
+    ['rcrl', {
+            description: 'Rotate through carry right long (32-bit)',
+            operands: 'count, dest32',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 3, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 3, category: 'moderate' }
+            }
+        }],
+    ['rcrq', {
+            description: 'Rotate through carry right 64-bit',
+            operands: 'count, dest64',
+            category: 'Shift/Rotate',
+            flags: 'OF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 1, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'moderate' }
             }
         }],
     ['shld', {
@@ -655,9 +1137,105 @@ exports.instructionDatabase = new Map([
                 'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
             }
         }],
+    ['shldb', {
+            description: 'Double precision shift left byte',
+            operands: 'count, src8, dest8',
+            category: 'Shift/Rotate',
+            flags: 'SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 2, ports: ['p1', 'p6'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 2, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
+    ['shldw', {
+            description: 'Double precision shift left word',
+            operands: 'count, src16, dest16',
+            category: 'Shift/Rotate',
+            flags: 'SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 2, ports: ['p1', 'p6'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 2, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
+    ['shldl', {
+            description: 'Double precision shift left long (32-bit)',
+            operands: 'count, src32, dest32',
+            category: 'Shift/Rotate',
+            flags: 'SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 2, ports: ['p1', 'p6'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 2, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
+    ['shldq', {
+            description: 'Double precision shift left 64-bit',
+            operands: 'count, src64, dest64',
+            category: 'Shift/Rotate',
+            flags: 'SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 2, ports: ['p1', 'p6'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 2, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
     ['shrd', {
             description: 'Double precision shift right',
             operands: 'count, src, dest',
+            category: 'Shift/Rotate',
+            flags: 'SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 2, ports: ['p1', 'p6'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 2, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
+    ['shrdb', {
+            description: 'Double precision shift right byte',
+            operands: 'count, src8, dest8',
+            category: 'Shift/Rotate',
+            flags: 'SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 2, ports: ['p1', 'p6'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 2, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
+    ['shrdw', {
+            description: 'Double precision shift right word',
+            operands: 'count, src16, dest16',
+            category: 'Shift/Rotate',
+            flags: 'SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 2, ports: ['p1', 'p6'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 2, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
+    ['shrdl', {
+            description: 'Double precision shift right long (32-bit)',
+            operands: 'count, src32, dest32',
+            category: 'Shift/Rotate',
+            flags: 'SF,ZF,PF,CF',
+            performance: {
+                'skylake': { latency: 3, throughput: 2, ports: ['p1', 'p6'], sizeBytes: 4, category: 'moderate' },
+                'zen3': { latency: 3, throughput: 2, ports: ['p01'], sizeBytes: 4, category: 'moderate' },
+                'alderlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' },
+                'raptorlake': { latency: 3, throughput: 2, ports: ['p16'], sizeBytes: 4, category: 'moderate' }
+            }
+        }],
+    ['shrdq', {
+            description: 'Double precision shift right 64-bit',
+            operands: 'count, src64, dest64',
             category: 'Shift/Rotate',
             flags: 'SF,ZF,PF,CF',
             performance: {

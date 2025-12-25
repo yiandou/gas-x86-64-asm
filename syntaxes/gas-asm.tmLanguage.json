@@ -229,7 +229,7 @@
                 },
                 {
                     "name": "keyword.mnemonic.fpu.gas-asm",
-                    "match": "\\b(fadd|faddp|fiadd|fsub|fsubp|fsubr|fsubrp|fisub|fisubr|fmul|fmulp|fimul|fdiv|fdivp|fdivr|fdivrp|fidiv|fidivr|fsqrt|fabs|fchs|fld|fld1|fldz|fldpi|fst|fstp|fxch|fcom|fcomp|fcompp|fsin|fcos|fsincos)\\b"
+                    "match": "\\b(fadd|faddp|fiadd|fsub|fsubp|fsubr|fsubrp|fisub|fisubr|fmul|fmulp|fimul|fdiv|fdivp|fdivr|fdivrp|fidiv|fidivr|fsqrt|fabs|fchs|fld|fld1|fldz|fldpi|fldl2t|fldl2e|fldl|fldlg2|fldln2|fst|fstp|fxch|fcom|fcomp|fcompp|fsin|fcos|fsincos)\\b"
                 },
                 {
                     "name": "keyword.mnemonic.mmx.gas-asm",
