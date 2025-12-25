@@ -71,6 +71,15 @@
                 "path": "./syntaxes/gas-asm.tmLanguage.json"
             }
         ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "gasAsmExplorer",
+                    "title": "GAS Assembly",
+                    "icon": "$(circuit-board)"
+                }
+            ]
+        },
         "views": {
             "gasAsmExplorer": [
                 {

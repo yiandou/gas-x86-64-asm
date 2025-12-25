@@ -610,10 +610,12 @@ function detectDeadCode(document: vscode.TextDocument): types.DeadCodeRange[] {
 }
 
 class RegisterTreeItem extends vscode.TreeItem {
+    public afterItem?: RegisterTreeItem;
+
     constructor(
         public override readonly label: string,
         public override readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly itemType: 'category' | 'register' | 'flag' | 'stack' | 'memory' | 'instruction' | 'stack-header',
+        public readonly itemType: 'category' | 'register' | 'register-after' | 'flag' | 'flag-after' | 'stack' | 'memory' | 'memory-after' | 'instruction' | 'stack-header',
         public readonly registerName?: string,
         public readonly value?: types.RegisterValue
     ) {
@@ -804,46 +806,70 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
             if (element.label?.startsWith('General Purpose Registers')) {
                 const gprRegs = this.getRegistersForCategory('gpr');
                 for (const [reg, afterValue] of gprRegs) {
-                    items.push(this.createRegisterItem(reg, afterValue, changes.registers));
+                    const item = this.createRegisterItem(reg, afterValue, changes.registers);
+                    items.push(item);
+                    if (item.afterItem) {
+                        items.push(item.afterItem);
+                    }
                 }
             } else if (element.label?.startsWith('SIMD Registers')) {
                 const simdRegs = this.getRegistersForCategory('simd');
                 for (const [reg, afterValue] of simdRegs) {
-                    items.push(this.createRegisterItem(reg, afterValue, changes.registers));
+                    const item = this.createRegisterItem(reg, afterValue, changes.registers);
+                    items.push(item);
+                    if (item.afterItem) {
+                        items.push(item.afterItem);
+                    }
                 }
             } else if (element.label?.startsWith('FPU Registers')) {
                 const fpuRegs = this.getRegistersForCategory('fpu');
                 for (const [reg, afterValue] of fpuRegs) {
-                    items.push(this.createRegisterItem(reg, afterValue, changes.registers));
+                    const item = this.createRegisterItem(reg, afterValue, changes.registers);
+                    items.push(item);
+                    if (item.afterItem) {
+                        items.push(item.afterItem);
+                    }
                 }
             } else if (element.label?.startsWith('Other Registers')) {
                 const otherRegs = this.getRegistersForCategory('other');
                 for (const [reg, afterValue] of otherRegs) {
-                    items.push(this.createRegisterItem(reg, afterValue, changes.registers));
+                    const item = this.createRegisterItem(reg, afterValue, changes.registers);
+                    items.push(item);
+                    if (item.afterItem) {
+                        items.push(item.afterItem);
+                    }
                 }
             } else if (element.label?.startsWith('Flags')) {
                 for (const [flag, afterCondition] of Object.entries(this.stateAfter.flags)) {
                     const beforeCondition = this.stateBefore!.flags[flag];
                     const changed = beforeCondition !== afterCondition;
 
-                    let label: string;
-                    if (changed && beforeCondition) {
-                        label = `${flag}: ${beforeCondition} => ${afterCondition}`;
-                    } else if (changed) {
-                        label = `${flag}: undefined => ${afterCondition}`;
-                    } else {
-                        label = `${flag}: ${afterCondition}`;
-                    }
+                    if (changed) {
+                        const label = `${flag}: ${beforeCondition || undefined}`;
+                        const item = new RegisterTreeItem(
+                            label,
+                            vscode.TreeItemCollapsibleState.None,
+                            'flag'
+                        );
+                        item.iconPath = new vscode.ThemeIcon('symbol-boolean', new vscode.ThemeColor('charts.yellow'));
+                        items.push(item);
 
-                    const item = new RegisterTreeItem(
-                        label,
-                        vscode.TreeItemCollapsibleState.None,
-                        'flag'
-                    );
-                    item.iconPath = changed
-                        ? new vscode.ThemeIcon('symbol-boolean', new vscode.ThemeColor('charts.yellow'))
-                        : new vscode.ThemeIcon('symbol-boolean');
-                    items.push(item);
+                        const afterItem = new RegisterTreeItem(
+                            `   ⮕ ${afterCondition}`,
+                            vscode.TreeItemCollapsibleState.None,
+                            'flag-after'
+                        );
+                        afterItem.iconPath = new vscode.ThemeIcon('arrow-small-right', new vscode.ThemeColor('charts.yellow'));
+                        items.push(afterItem);
+                    } else {
+                        const item = new RegisterTreeItem(
+                            `${flag} = ${afterCondition}`,
+                            vscode.TreeItemCollapsibleState.None,
+                            'flag'
+                        );
+                        item.iconPath = new vscode.ThemeIcon('symbol-boolean');
+                        items.push(item);
+                    }
                 }
             } else if (element.label?.startsWith('Stack')) {
                 // Show stack with before/after if it changed
@@ -918,7 +944,8 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
                 }
             } else if (element.label?.startsWith('Memory')) {
                 for (const change of changes.memory) {
-                    const label = change.before !== 'undefined' ? `*${change.name}: ${change.before} => ${change.after}` : `*${change.name}: ${change.after}`;
+                    const label = `*${change.name}: ${change.before !== 'undefined' ? change.before : 'undefined'}`;
+
                     const item = new RegisterTreeItem(
                         label,
                         vscode.TreeItemCollapsibleState.None,
@@ -926,15 +953,25 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
                     );
                     item.iconPath = new vscode.ThemeIcon('symbol-variable', new vscode.ThemeColor('charts.yellow'));
                     items.push(item);
+
+                    const afterItem = new RegisterTreeItem(
+                        `   ⮕ ${change.after}`,
+                        vscode.TreeItemCollapsibleState.None,
+                        'memory-after'
+                    );
+                    afterItem.iconPath = new vscode.ThemeIcon('arrow-small-right', new vscode.ThemeColor('charts.yellow'));
+                    items.push(afterItem);
                 }
 
+                // Unchanged memory
                 for (const [addr, value] of Object.entries(this.stateAfter.memory)) {
                     if (!changes.memory.some(c => c.name === addr)) {
                         const item = new RegisterTreeItem(
-                            `*${addr}: ${formatValue(value)}`,
+                            `*${addr}`,
                             vscode.TreeItemCollapsibleState.None,
                             'memory'
                         );
+                        item.description = formatValue(value);
                         item.iconPath = new vscode.ThemeIcon('symbol-variable');
                         items.push(item);
                     }
@@ -997,7 +1034,29 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
         let label: string;
         if (change) {
             // Show before => after
-            label = `${reg}: ${change.before} => ${change.after}`;
+            label = `${reg}: ${change.before}`;
+
+            const item = new RegisterTreeItem(
+                label,
+                vscode.TreeItemCollapsibleState.None,
+                'register',
+                reg,
+                afterValue
+            );
+            item.iconPath = new vscode.ThemeIcon('symbol-number', new vscode.ThemeColor('charts.yellow'));
+
+            const afterItem = new RegisterTreeItem(
+                `   ⮕ ${change.after}`,
+                vscode.TreeItemCollapsibleState.None,
+                'register-after',
+                reg,
+                afterValue,
+            );
+            afterItem.iconPath = new vscode.ThemeIcon('arrow-small-right', new vscode.ThemeColor('charts.yellow'));
+
+            item.afterItem = afterItem;
+
+            return item;
         } else {
             // No change, show current value
             label = `${reg} = ${formatValue(afterValue)}`;
@@ -1078,131 +1137,329 @@ function createHoverProvider(): vscode.HoverProvider {
             const line = document.lineAt(position).text;
             const trimmed = line.trim();
 
-            // Skip if not an instruction line
-            if (!trimmed.match(/^\s*[a-zA-Z]/)) {
-                return null;
-            }
+            const config = vscode.workspace.getConfiguration('gas-asm.performance');
+            const targetCPU = config.get<string>('targetCPU', 'skylake');
 
-            // Parse the instruction
-            const instrMatch = trimmed.match(/^\s*([a-zA-Z][a-zA-Z0-9]*)\s+(.+?)(?:\s*#.*)?$/);
-            if (!instrMatch) {
-                return null;
-            }
-
-            const instruction = instrMatch[1].toLowerCase();
-
-            // Get state before and after this instruction
-            const stateBefore = analyzeRegisters(document, position.line - 1);
-            const stateAfter = analyzeRegisters(document, position.line);
-
-            // Find what changed
-            const changes: { type: 'register' | 'flag' | 'stack' | 'memory', name: string, before: string, after: string }[] = [];
-
-            // Check register changes
-            for (const [reg, afterVal] of Object.entries(stateAfter.registers)) {
-                const beforeVal = stateBefore.registers[reg];
-                const afterStr = formatValue(afterVal);
-                const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
-
-                if (!beforeVal || formatValue(beforeVal) !== afterStr) {
-                    changes.push({
-                        type: 'register',
-                        name: reg,
-                        before: beforeStr,
-                        after: afterStr
-                    });
-                }
-            }
-
-            // Check flag changes
-            for (const [flag, afterCond] of Object.entries(stateAfter.flags)) {
-                const beforeCond = stateBefore.flags[flag];
-                if (beforeCond !== afterCond) {
-                    changes.push({
-                        type: 'flag',
-                        name: flag,
-                        before: beforeCond || 'undefined',
-                        after: afterCond
-                    });
-                }
-            }
-
-            // Check stack changes
-            if (stateAfter.stack.items.length !== stateBefore.stack.items.length) {
-                changes.push({
-                    type: 'stack',
-                    name: 'Stack',
-                    before: `${stateBefore.stack.items.length} items`,
-                    after: `${stateAfter.stack.items.length} items`
-                });
-            }
-
-            // Check memory changes
-            for (const [addr, afterVal] of Object.entries(stateAfter.memory)) {
-                const beforeVal = stateBefore.memory[addr];
-                const afterStr = formatValue(afterVal);
-                const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
-
-                if (!beforeVal || formatValue(beforeVal) !== afterStr) {
-                    changes.push({
-                        type: 'memory',
-                        name: `*${addr}`,
-                        before: beforeStr,
-                        after: afterStr
-                    });
-                }
-            }
-
-            // If we found changes, show them
-            if (changes.length > 0) {
+            if (word === 'syscall') {
                 const markdown = new vscode.MarkdownString();
-                markdown.appendMarkdown(`**${instruction}** - State Changes\n\n`);
+                markdown.appendMarkdown('**System Call**\n\n');
 
-                // Group by type
-                const registerChanges = changes.filter(c => c.type === 'register');
-                const flagChanges = changes.filter(c => c.type === 'flag');
-                const stackChanges = changes.filter(c => c.type === 'stack');
-                const memoryChanges = changes.filter(c => c.type === 'memory');
+                const fullState = analyzeRegisters(document, position.line);
+                const raxValue = fullState.registers['%rax'];
 
-                if (registerChanges.length > 0) {
-                    markdown.appendMarkdown('**Registers:**\n```\n');
-                    registerChanges.forEach(change => {
-                        markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
-                    });
-                    markdown.appendMarkdown('```\n\n');
+                let syscallNum: number | null = null;
+                if (raxValue && raxValue.type === 'immediate') {
+                    syscallNum = raxValue.value;
                 }
 
-                if (flagChanges.length > 0) {
-                    markdown.appendMarkdown('**Flags:**\n```\n');
-                    flagChanges.forEach(change => {
-                        markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
-                    });
-                    markdown.appendMarkdown('```\n\n');
-                }
+                if (syscallNum !== null && LINUX_SYSCALLS.has(syscallNum)) {
+                    const syscallInfo = LINUX_SYSCALLS.get(syscallNum)!;
 
-                if (stackChanges.length > 0) {
-                    markdown.appendMarkdown('**Stack:**\n```\n');
-                    stackChanges.forEach(change => {
-                        markdown.appendMarkdown(`${change.before} => ${change.after}\n`);
-                    });
-                    markdown.appendMarkdown('```\n\n');
-                }
+                    markdown.appendMarkdown(`**Syscall \`${syscallInfo.name}\` (${syscallNum})**\n\n`);
+                    markdown.appendMarkdown(`${syscallInfo.description}\n\n`);
 
-                if (memoryChanges.length > 0) {
-                    markdown.appendMarkdown('**Memory:**\n```\n');
-                    memoryChanges.forEach(change => {
-                        markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
-                    });
+                    if (syscallInfo.parameters.length > 0) {
+                        markdown.appendMarkdown('**Parameters:**\n```\n');
+                        syscallInfo.parameters.forEach(param => {
+                            markdown.appendMarkdown(`${param}\n`);
+                        });
+                        markdown.appendMarkdown('```\n\n');
+
+                        markdown.appendMarkdown('**Current arguments:**\n```\n');
+                        const argRegs = ['%rdi', '%rsi', '%rdx', '%r10', '%r8', '%r9'];
+                        syscallInfo.parameters.forEach((_param, i) => {
+                            const reg = argRegs[i];
+                            const val = fullState.registers[reg];
+                            if (val) {
+                                markdown.appendMarkdown(`${reg} = ${formatValue(val)}\n`);
+                            }
+                        });
+                    } else {
+                        markdown.appendMarkdown('**Parameters:** None\n\n');
+                    }
+
+                    markdown.appendMarkdown(`**Returns:** ${syscallInfo.returns}\n\n`);
+
+                    if (syscallInfo.errors) {
+                        markdown.appendMarkdown(`**Errors:** ${syscallInfo.errors}\n\n`);
+                    }
+                } else {
+                    markdown.appendMarkdown(`**Syscall Numer:** ${syscallNum !== null ? syscallNum : 'unknown'}\n\n`);
+                    if (syscallNum === null) {
+                        markdown.appendMarkdown('*Cannot determine syscall number: %rax value is not known\n');
+                    } else {
+                        markdown.appendMarkdown('*Syscall number not recognized*\n');
+                    }
+                }
+                return new vscode.Hover(markdown);
+            }
+
+            const callMatch = line.match(/^\s*call[q]?\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
+            if (callMatch && callMatch[1] === word) {
+                const functionInfo = analyzeFunctionInterface(document, word);
+
+                const markdown = new vscode.MarkdownString();
+
+                if (functionInfo) {
+                    const infoLines = formatFunctionInfo(functionInfo);
+                    infoLines.forEach(line => markdown.appendMarkdown(line + '\n'));
+                } else {
+                    markdown.appendMarkdown(`**Function Call: \`${word}\`**\n\n`);
+                    markdown.appendMarkdown('*External function or definition not found in current file*\n\n');
+
+                    // Show System V AMD64 ABI info
+                    markdown.appendMarkdown('**Standard Calling Convention (System V AMD64 ABI):**\n');
+                    markdown.appendMarkdown('```\n');
+                    markdown.appendMarkdown('Parameters: %rdi, %rsi, %rdx, %rcx, %r8, %r9\n');
+                    markdown.appendMarkdown('Return: %rax (integer), %xmm0 (float)\n');
+                    markdown.appendMarkdown('Clobbered: %rax, %rcx, %rdx, %rsi, %rdi, %r8-%r11\n');
+                    markdown.appendMarkdown('Preserved: %rbx, %rbp, %r12-%r15\n');
                     markdown.appendMarkdown('```\n');
                 }
 
-                // Get instruction info from database
-                const instructionInfo = instructionDatabase.get(instruction);
-                if (instructionInfo) {
-                    markdown.appendMarkdown('\n---\n\n');
-                    markdown.appendMarkdown(`*${instructionInfo.description}*`);
+                return new vscode.Hover(markdown);
+            }
+
+            // Check for directives
+            if (word.startsWith('.')) {
+                const directiveInfo = directiveDatabase.get(word);
+                if (directiveInfo) {
+                    const markdown = new vscode.MarkdownString();
+                    markdown.appendMarkdown(`**${word}**\n\n`);
+                    markdown.appendMarkdown(`${directiveInfo.description}\n\n`);
+                    if (directiveInfo.usage) {
+                        markdown.appendCodeblock(directiveInfo.usage, 'gas-asm');
+                    }
+                    return new vscode.Hover(markdown);
+                }
+            }
+
+            if (word.startsWith('%')) {
+                const registerInfo = registerDatabase.get(word);
+                const markdown = new vscode.MarkdownString();
+
+                if (registerInfo) {
+                    markdown.appendMarkdown(`**${word}** (${registerInfo.size}-bit)\n\n`);
+                    markdown.appendMarkdown(`${registerInfo.description}\n\n`);
+                    markdown.appendMarkdown(`*Type:* ${registerInfo.type}\n\n`);
                 }
 
+                const fullState = analyzeRegisters(document, position.line);
+                const normalizedReg = normalizeRegister(word);
+                const regCategory = getRegisterCategory(word);
+                const value = fullState.registers[normalizedReg];
+
+                if (value) {
+                    markdown.appendMarkdown('---\n\n');
+                    markdown.appendMarkdown(`**Current Value:**\n\n`);
+
+                    const formattedValue = formatValue(value);
+                    markdown.appendCodeblock(formattedValue, 'text');
+
+                    const allStates: string[] = [];
+                    for (const [reg, val] of Object.entries(fullState.registers)) {
+                        if (val.type !== 'unknown') {
+                            const thisCategory = getRegisterCategory(reg);
+                            // Show GPR with GPR, SIMD with SIMD, etc.
+                            if (thisCategory === regCategory || regCategory === 'gpr') {
+                                allStates.push(`${reg} = ${formatValue(val)}`);
+                            }
+                        }
+                    }
+
+                    if (allStates.length > 1) {
+                        const categoryName = regCategory === 'gpr' ? 'general purpose registers' :
+                            regCategory === 'simd' ? 'SIMD registers' :
+                                regCategory === 'fpu' ? 'FPU registers' : 'registers';
+                        markdown.appendMarkdown(`\n*All known ${categoryName} at this point:*\n\n`);
+                        markdown.appendCodeblock(allStates.join('\n'), 'text');
+                    }
+
+                    const stackLines = formatStack(fullState.stack);
+                    if (stackLines.length > 0) {
+                        markdown.appendMarkdown('\n');
+                        stackLines.forEach(line => markdown.appendMarkdown(line + '\n'));
+                    }
+
+                    // Show memory state (only stack/frame-relative addresses for clarity)
+                    const memoryItems = Object.entries(fullState.memory).filter(([addr]) =>
+                        addr.includes('%rsp') || addr.includes('%rbp')
+                    );
+                    if (memoryItems.length > 0) {
+                        markdown.appendMarkdown('\n**Memory (stack frame):**\n\n');
+                        markdown.appendCodeblock(
+                            memoryItems.map(([addr, val]) => `${addr} = ${formatValue(val)}`).join('\n'),
+                            'text'
+                        );
+                    }
+
+                    // Show other memory separately if present
+                    const otherMemory = Object.entries(fullState.memory).filter(([addr]) =>
+                        !addr.includes('%rsp') && !addr.includes('%rbp')
+                    );
+                    if (otherMemory.length > 0 && otherMemory.length <= 3) {
+                        markdown.appendMarkdown('\n**Other Memory:**\n\n');
+                        markdown.appendCodeblock(
+                            otherMemory.map(([addr, val]) => `*${addr} = ${formatValue(val)}`).join('\n'),
+                            'text'
+                        );
+                    }
+
+                    // Show flag state
+                    const flagStr = formatFlags(fullState.flags);
+                    if (flagStr) {
+                        markdown.appendMarkdown(`\n**Flags:** ${flagStr}\n`);
+                    }
+                }
+
+                return new vscode.Hover(markdown);
+            }
+
+            const instructionInfo = instructionDatabase.get(word);
+            if (instructionInfo) {
+                const markdown = new vscode.MarkdownString();
+
+                // Check if we're on an instruction line
+                const instrMatch = trimmed.match(/^\s*([a-zA-Z][a-zA-Z0-9]*)\s+(.+?)(?:\s*#.*)?$/);
+                if (instrMatch && instrMatch[1].toLowerCase() === word.toLowerCase()) {
+                    // We're hovering over an instruction on an instruction line - show state changes
+
+                    // Get state before and after this instruction
+                    const stateBefore = position.line > 0 ? analyzeRegisters(document, position.line - 1) : {
+                        registers: {},
+                        memory: {},
+                        stack: { items: [], offset: 0 },
+                        flags: {}
+                    };
+                    const stateAfter = analyzeRegisters(document, position.line);
+
+                    // Find what changed
+                    const changes: { type: 'register' | 'flag' | 'stack' | 'memory', name: string, before: string, after: string }[] = [];
+
+                    // Check register changes
+                    for (const [reg, afterVal] of Object.entries(stateAfter.registers)) {
+                        const beforeVal = stateBefore.registers[reg];
+                        const afterStr = formatValue(afterVal);
+                        const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
+
+                        if (!beforeVal || formatValue(beforeVal) !== afterStr) {
+                            changes.push({
+                                type: 'register',
+                                name: reg,
+                                before: beforeStr,
+                                after: afterStr
+                            });
+                        }
+                    }
+
+                    // Check flag changes
+                    for (const [flag, afterCond] of Object.entries(stateAfter.flags)) {
+                        const beforeCond = stateBefore.flags[flag];
+                        if (beforeCond !== afterCond) {
+                            changes.push({
+                                type: 'flag',
+                                name: flag,
+                                before: beforeCond || 'undefined',
+                                after: afterCond
+                            });
+                        }
+                    }
+
+                    // Check stack changes
+                    if (stateAfter.stack.items.length !== stateBefore.stack.items.length) {
+                        changes.push({
+                            type: 'stack',
+                            name: 'Stack',
+                            before: `${stateBefore.stack.items.length} items`,
+                            after: `${stateAfter.stack.items.length} items`
+                        });
+                    }
+
+                    // Check memory changes
+                    for (const [addr, afterVal] of Object.entries(stateAfter.memory)) {
+                        const beforeVal = stateBefore.memory[addr];
+                        const afterStr = formatValue(afterVal);
+                        const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
+
+                        if (!beforeVal || formatValue(beforeVal) !== afterStr) {
+                            changes.push({
+                                type: 'memory',
+                                name: `*${addr}`,
+                                before: beforeStr,
+                                after: afterStr
+                            });
+                        }
+                    }
+
+                    // If we found changes, show them first
+                    if (changes.length > 0) {
+                        markdown.appendMarkdown(`**${word}** - State Changes\n\n`);
+
+                        // Group by type
+                        const registerChanges = changes.filter(c => c.type === 'register');
+                        const flagChanges = changes.filter(c => c.type === 'flag');
+                        const stackChanges = changes.filter(c => c.type === 'stack');
+                        const memoryChanges = changes.filter(c => c.type === 'memory');
+
+                        if (registerChanges.length > 0) {
+                            markdown.appendMarkdown('**Registers:**\n```\n');
+                            registerChanges.forEach(change => {
+                                markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
+                            });
+                            markdown.appendMarkdown('```\n\n');
+                        }
+
+                        if (flagChanges.length > 0) {
+                            markdown.appendMarkdown('**Flags:**\n```\n');
+                            flagChanges.forEach(change => {
+                                markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
+                            });
+                            markdown.appendMarkdown('```\n\n');
+                        }
+
+                        if (stackChanges.length > 0) {
+                            markdown.appendMarkdown('**Stack:**\n```\n');
+                            stackChanges.forEach(change => {
+                                markdown.appendMarkdown(`${change.before} => ${change.after}\n`);
+                            });
+                            markdown.appendMarkdown('```\n\n');
+                        }
+
+                        if (memoryChanges.length > 0) {
+                            markdown.appendMarkdown('**Memory:**\n```\n');
+                            memoryChanges.forEach(change => {
+                                markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
+                            });
+                            markdown.appendMarkdown('```\n\n');
+                        }
+
+                        markdown.appendMarkdown('---\n\n');
+                    }
+                }
+
+                // Show instruction info
+                markdown.appendMarkdown(`**${word}** - ${instructionInfo.description}\n\n`);
+                markdown.appendCodeblock(`${word} ${instructionInfo.operands}`, 'gas-asm');
+                if (instructionInfo.category) {
+                    markdown.appendMarkdown(`\n*Category:* ${instructionInfo.category}`);
+                }
+                if (instructionInfo.flags) {
+                    markdown.appendMarkdown(`\n\n*Flags Affected:* ${instructionInfo.flags}`);
+                }
+
+                if (instructionInfo.performance) {
+                    const perf = instructionInfo.performance[targetCPU];
+                    if (perf) {
+                        markdown.appendMarkdown(`\n\n*Performance (${targetCPU}):* `);
+                        markdown.appendMarkdown(`${perf.latency}cy latency, ${perf.throughput.toFixed(2)} CPI, ${perf.sizeBytes}B`);
+                    }
+                }
+
+                if (instructionInfo.alternatives && instructionInfo.alternatives.length > 0) {
+                    markdown.appendMarkdown(`\n\n[View ${instructionInfo.alternatives.length} alternative${instructionInfo.alternatives.length > 1 ? 's' : ''}](command:gas-asm.showAlternatives?${encodeURIComponent(JSON.stringify({ instruction: word }))})`);
+                }
+
+                markdown.isTrusted = true;
                 return new vscode.Hover(markdown);
             }
 
@@ -1756,7 +2013,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     const registerStateProvider = new RegisterStateProvider();
-    const registerStateView = vscode.window.createTreeView('gas-asm.registerState', {
+    const registerStateView = vscode.window.createTreeView('gas-asm.RegisterState', {
         treeDataProvider: registerStateProvider,
         showCollapseAll: true
     });
