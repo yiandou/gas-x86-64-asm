@@ -70,7 +70,17 @@
                 "scopeName": "source.gas-asm",
                 "path": "./syntaxes/gas-asm.tmLanguage.json"
             }
-        ]
+        ],
+        "views": {
+            "gasAsmExplorer": [
+                {
+                    "id": "gas-asm.RegisterState",
+                    "name": "Register State",
+                    "icon": "$(circuit-board)",
+                    "contextualTitle": "Assembly Register State"
+                }
+            ]
+        }
     },
     "scripts": {
         "vscode:prepublish": "npm run compile",

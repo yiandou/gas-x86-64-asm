@@ -26,7 +26,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.deactivate = exports.activate = void 0;
 const vscode = __importStar(require("vscode"));
 const instr_1 = require("./instr");
-const syscall_1 = require("./syscall");
 const register_1 = require("./register");
 const directive_1 = require("./directive");
 function escapeHtml(text) {
@@ -572,6 +571,321 @@ function detectDeadCode(document) {
     }
     return deadCodeRanges;
 }
+class RegisterTreeItem extends vscode.TreeItem {
+    constructor(label, collapsibleState, itemType, registerName, value) {
+        super(label, collapsibleState);
+        this.label = label;
+        this.collapsibleState = collapsibleState;
+        this.itemType = itemType;
+        this.registerName = registerName;
+        this.value = value;
+        if (itemType === 'category') {
+            this.contextValue = 'category';
+        }
+        else if (itemType === 'register') {
+            this.contextValue = 'register';
+            this.tooltip = `${registerName}: ${formatValue(value)}`;
+        }
+        else if (itemType === 'instruction') {
+            this.contextValue = 'instruction';
+            this.iconPath = new vscode.ThemeIcon('debug-stackframe');
+        }
+        else if (itemType === 'stack-header') {
+            this.iconPath = new vscode.ThemeIcon('chevron-right');
+        }
+    }
+}
+class RegisterStateProvider {
+    constructor() {
+        this._onDidChangeTreeData = new vscode.EventEmitter();
+        this.onDidChangeTreeData = this._onDidChangeTreeData.event;
+        this.stateBefore = null;
+        this.stateAfter = null;
+        this.currentDocument = null;
+        this.currentLine = -1;
+    }
+    refresh() {
+        this._onDidChangeTreeData.fire();
+    }
+    updateState(document, line) {
+        this.currentDocument = document;
+        this.currentLine = line;
+        this.stateBefore = line > 0 ? analyzeRegisters(document, line - 1) : {
+            registers: {},
+            memory: {},
+            stack: { items: [], offset: 0 },
+            flags: {}
+        };
+        this.stateAfter = analyzeRegisters(document, line);
+        this.refresh();
+    }
+    getTreeItem(element) {
+        return element;
+    }
+    getChildren(element) {
+        if (!this.stateAfter || !this.currentDocument) {
+            return Promise.resolve([]);
+        }
+        if (!element) {
+            const categories = [];
+            const currentLine = this.currentDocument.lineAt(this.currentLine);
+            const trimmed = currentLine.text.trim();
+            if (trimmed.length > 0 && !trimmed.startsWith('#') && !trimmed.startsWith('//') && !trimmed.startsWith('.')) {
+                const instrMatch = trimmed.match(/^\s*([a-zA-Z][a-zA-Z0-9]*)/);
+                if (instrMatch) {
+                    categories.push(new RegisterTreeItem(`Line ${this.currentLine + 1}: ${trimmed.substring(0, 50)}${trimmed.length > 50 ? '...' : ''}`, vscode.TreeItemCollapsibleState.None, 'instruction'));
+                }
+            }
+            const changes = this.calculateChanges();
+            const gprRegs = this.getRegistersForCategory('gpr');
+            if (gprRegs.length > 0) {
+                const changedCount = gprRegs.filter(([reg]) => changes.registers.some(c => c.name === reg)).length;
+                const label = changedCount > 0
+                    ? `General Purpose Registers (${changedCount} changed)`
+                    : 'General Purpose Registers';
+                categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Expanded, 'category'));
+            }
+            // SIMD Registers
+            const simdRegs = this.getRegistersForCategory('simd');
+            if (simdRegs.length > 0) {
+                const changedCount = simdRegs.filter(([reg]) => changes.registers.some(c => c.name === reg)).length;
+                const label = changedCount > 0
+                    ? `SIMD Registers (${changedCount} changed)`
+                    : 'SIMD Registers';
+                categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Collapsed, 'category'));
+            }
+            // FPU Registers
+            const fpuRegs = this.getRegistersForCategory('fpu');
+            if (fpuRegs.length > 0) {
+                const changedCount = fpuRegs.filter(([reg]) => changes.registers.some(c => c.name === reg)).length;
+                const label = changedCount > 0
+                    ? `FPU Registers (${changedCount} changed)`
+                    : 'FPU Registers';
+                categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Collapsed, 'category'));
+            }
+            // Other Registers
+            const otherRegs = this.getRegistersForCategory('other');
+            if (otherRegs.length > 0) {
+                const changedCount = otherRegs.filter(([reg]) => changes.registers.some(c => c.name === reg)).length;
+                const label = changedCount > 0
+                    ? `Other Registers (${changedCount} changed)`
+                    : 'Other Registers';
+                categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Collapsed, 'category'));
+            }
+            // Flags
+            if (Object.keys(this.stateAfter.flags).length > 0) {
+                const changedCount = changes.flags.length;
+                const label = changedCount > 0
+                    ? `Flags (${changedCount} changed)`
+                    : 'Flags';
+                categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Expanded, 'category'));
+            }
+            // Stack
+            if (this.stateAfter.stack.items.length > 0 || this.stateBefore.stack.items.length > 0) {
+                const beforeCount = this.stateBefore.stack.items.length;
+                const afterCount = this.stateAfter.stack.items.length;
+                const label = beforeCount !== afterCount
+                    ? `Stack (${beforeCount} => ${afterCount} items)`
+                    : `Stack (${afterCount} items)`;
+                categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Expanded, 'category'));
+            }
+            // Memory
+            const memoryCount = Object.keys(this.stateAfter.memory).length;
+            const beforeMemoryCount = Object.keys(this.stateBefore.memory).length;
+            if (memoryCount > 0 || beforeMemoryCount > 0) {
+                const changedCount = changes.memory.length;
+                const label = changedCount > 0
+                    ? `Memory (${changedCount} changed)`
+                    : `Memory (${memoryCount} locations)`;
+                categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Collapsed, 'category'));
+            }
+            return Promise.resolve(categories);
+        }
+        else {
+            const items = [];
+            const changes = this.calculateChanges();
+            if (element.itemType === 'instruction') {
+                return Promise.resolve([]);
+            }
+            if (element.label?.startsWith('General Purpose Registers')) {
+                const gprRegs = this.getRegistersForCategory('gpr');
+                for (const [reg, afterValue] of gprRegs) {
+                    items.push(this.createRegisterItem(reg, afterValue, changes.registers));
+                }
+            }
+            else if (element.label?.startsWith('SIMD Registers')) {
+                const simdRegs = this.getRegistersForCategory('simd');
+                for (const [reg, afterValue] of simdRegs) {
+                    items.push(this.createRegisterItem(reg, afterValue, changes.registers));
+                }
+            }
+            else if (element.label?.startsWith('FPU Registers')) {
+                const fpuRegs = this.getRegistersForCategory('fpu');
+                for (const [reg, afterValue] of fpuRegs) {
+                    items.push(this.createRegisterItem(reg, afterValue, changes.registers));
+                }
+            }
+            else if (element.label?.startsWith('Other Registers')) {
+                const otherRegs = this.getRegistersForCategory('other');
+                for (const [reg, afterValue] of otherRegs) {
+                    items.push(this.createRegisterItem(reg, afterValue, changes.registers));
+                }
+            }
+            else if (element.label?.startsWith('Flags')) {
+                for (const [flag, afterCondition] of Object.entries(this.stateAfter.flags)) {
+                    const beforeCondition = this.stateBefore.flags[flag];
+                    const changed = beforeCondition !== afterCondition;
+                    let label;
+                    if (changed && beforeCondition) {
+                        label = `${flag}: ${beforeCondition} => ${afterCondition}`;
+                    }
+                    else if (changed) {
+                        label = `${flag}: undefined => ${afterCondition}`;
+                    }
+                    else {
+                        label = `${flag}: ${afterCondition}`;
+                    }
+                    const item = new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.None, 'flag');
+                    item.iconPath = changed
+                        ? new vscode.ThemeIcon('symbol-boolean', new vscode.ThemeColor('charts.yellow'))
+                        : new vscode.ThemeIcon('symbol-boolean');
+                    items.push(item);
+                }
+            }
+            else if (element.label?.startsWith('Stack')) {
+                // Show stack with before/after if it changed
+                const beforeStack = this.stateBefore.stack;
+                const afterStack = this.stateAfter.stack;
+                if (beforeStack.items.length !== afterStack.items.length) {
+                    // Stack size changed - show both
+                    items.push(new RegisterTreeItem('Before:', vscode.TreeItemCollapsibleState.None, 'stack-header'));
+                    for (let i = beforeStack.items.length - 1; i >= 0; i--) {
+                        const offset = beforeStack.offset - (beforeStack.items.length - 1 - i) * 8;
+                        const offsetStr = offset >= 0 ? `+${offset}` : `${offset}`;
+                        const value = formatValue(beforeStack.items[i]);
+                        const label = i === beforeStack.items.length - 1
+                            ? `  %rsp${offsetStr}: ${value} ← top`
+                            : `  %rsp${offsetStr}: ${value}`;
+                        const item = new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.None, 'stack');
+                        item.iconPath = new vscode.ThemeIcon('symbol-array');
+                        items.push(item);
+                    }
+                    items.push(new RegisterTreeItem('After:', vscode.TreeItemCollapsibleState.None, 'stack-header'));
+                    for (let i = afterStack.items.length - 1; i >= 0; i--) {
+                        const offset = afterStack.offset - (afterStack.items.length - 1 - i) * 8;
+                        const offsetStr = offset >= 0 ? `+${offset}` : `${offset}`;
+                        const value = formatValue(afterStack.items[i]);
+                        const label = i === afterStack.items.length - 1
+                            ? `  %rsp${offsetStr}: ${value} ← top`
+                            : `  %rsp${offsetStr}: ${value}`;
+                        const item = new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.None, 'stack');
+                        item.iconPath = new vscode.ThemeIcon('symbol-array', new vscode.ThemeColor('charts.yellow'));
+                        items.push(item);
+                    }
+                }
+                else {
+                    // Show current stack
+                    for (let i = afterStack.items.length - 1; i >= 0; i--) {
+                        const offset = afterStack.offset - (afterStack.items.length - 1 - i) * 8;
+                        const offsetStr = offset >= 0 ? `+${offset}` : `${offset}`;
+                        const value = formatValue(afterStack.items[i]);
+                        const label = i === afterStack.items.length - 1
+                            ? `%rsp${offsetStr}: ${value} ← top`
+                            : `%rsp${offsetStr}: ${value}`;
+                        const item = new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.None, 'stack');
+                        item.iconPath = new vscode.ThemeIcon('symbol-array');
+                        items.push(item);
+                    }
+                }
+            }
+            else if (element.label?.startsWith('Memory')) {
+                for (const change of changes.memory) {
+                    const label = change.before !== 'undefined' ? `*${change.name}: ${change.before} => ${change.after}` : `*${change.name}: ${change.after}`;
+                    const item = new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.None, 'memory');
+                    item.iconPath = new vscode.ThemeIcon('symbol-variable', new vscode.ThemeColor('charts.yellow'));
+                    items.push(item);
+                }
+                for (const [addr, value] of Object.entries(this.stateAfter.memory)) {
+                    if (!changes.memory.some(c => c.name === addr)) {
+                        const item = new RegisterTreeItem(`*${addr}: ${formatValue(value)}`, vscode.TreeItemCollapsibleState.None, 'memory');
+                        item.iconPath = new vscode.ThemeIcon('symbol-variable');
+                        items.push(item);
+                    }
+                }
+            }
+            return Promise.resolve(items);
+        }
+    }
+    getRegistersForCategory(category) {
+        return Object.entries(this.stateAfter.registers).filter(([reg, _]) => getRegisterCategory(reg) === category)
+            .sort((a, b) => a[0].localeCompare(b[0]));
+    }
+    calculateChanges() {
+        const registerChanges = [];
+        const flagChanges = [];
+        const memoryChanges = [];
+        for (const [reg, afterVal] of Object.entries(this.stateAfter.registers)) {
+            const beforeVal = this.stateBefore.registers[reg];
+            const afterStr = formatValue(afterVal);
+            const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
+            if (!beforeVal || formatValue(beforeVal) !== afterStr) {
+                registerChanges.push({ name: reg, before: beforeStr, after: afterStr });
+            }
+        }
+        // Flag changes
+        for (const [flag, afterCond] of Object.entries(this.stateAfter.flags)) {
+            const beforeCond = this.stateBefore.flags[flag];
+            if (beforeCond !== afterCond) {
+                flagChanges.push({ name: flag, before: beforeCond || 'undefined', after: afterCond });
+            }
+        }
+        // Memory changes
+        for (const [addr, afterVal] of Object.entries(this.stateAfter.memory)) {
+            const beforeVal = this.stateBefore.memory[addr];
+            const afterStr = formatValue(afterVal);
+            const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
+            if (!beforeVal || formatValue(beforeVal) !== afterStr) {
+                memoryChanges.push({ name: addr, before: beforeStr, after: afterStr });
+            }
+        }
+        return {
+            registers: registerChanges,
+            flags: flagChanges,
+            memory: memoryChanges
+        };
+    }
+    createRegisterItem(reg, afterValue, changes) {
+        const change = changes.find(c => c.name === reg);
+        let label;
+        if (change) {
+            // Show before => after
+            label = `${reg}: ${change.before} => ${change.after}`;
+        }
+        else {
+            // No change, show current value
+            label = `${reg} = ${formatValue(afterValue)}`;
+        }
+        const item = new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.None, 'register', reg, afterValue);
+        // Set icon and color based on whether it changed
+        if (change) {
+            // Changed - yellow highlight
+            item.iconPath = new vscode.ThemeIcon('symbol-number', new vscode.ThemeColor('charts.yellow'));
+        }
+        else if (afterValue.type === 'immediate') {
+            item.iconPath = new vscode.ThemeIcon('symbol-number', new vscode.ThemeColor('charts.green'));
+        }
+        else if (afterValue.type === 'symbolic' || afterValue.type === 'binary') {
+            item.iconPath = new vscode.ThemeIcon('symbol-operator', new vscode.ThemeColor('charts.blue'));
+        }
+        else if (afterValue.type === 'unknown') {
+            item.iconPath = new vscode.ThemeIcon('question', new vscode.ThemeColor('charts.red'));
+        }
+        else {
+            item.iconPath = new vscode.ThemeIcon('symbol-variable');
+        }
+        return item;
+    }
+}
 /* function formatPerformanceInfo(perf: types.PerformanceInfo, cpu: string): string {
     let content = `**Performance (${cpu}):**\n\n`;
     const maxCycles = 10;
@@ -607,6 +921,129 @@ function detectDeadCode(document) {
 
     return content;
 }*/
+function createHoverProvider() {
+    return {
+        provideHover(document, position) {
+            const range = document.getWordRangeAtPosition(position, /[.%]?[a-zA-Z_][a-zA-Z0-9_().]*/);
+            if (!range) {
+                return null;
+            }
+            const word = document.getText(range);
+            const line = document.lineAt(position).text;
+            const trimmed = line.trim();
+            // Skip if not an instruction line
+            if (!trimmed.match(/^\s*[a-zA-Z]/)) {
+                return null;
+            }
+            // Parse the instruction
+            const instrMatch = trimmed.match(/^\s*([a-zA-Z][a-zA-Z0-9]*)\s+(.+?)(?:\s*#.*)?$/);
+            if (!instrMatch) {
+                return null;
+            }
+            const instruction = instrMatch[1].toLowerCase();
+            // Get state before and after this instruction
+            const stateBefore = analyzeRegisters(document, position.line - 1);
+            const stateAfter = analyzeRegisters(document, position.line);
+            // Find what changed
+            const changes = [];
+            // Check register changes
+            for (const [reg, afterVal] of Object.entries(stateAfter.registers)) {
+                const beforeVal = stateBefore.registers[reg];
+                const afterStr = formatValue(afterVal);
+                const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
+                if (!beforeVal || formatValue(beforeVal) !== afterStr) {
+                    changes.push({
+                        type: 'register',
+                        name: reg,
+                        before: beforeStr,
+                        after: afterStr
+                    });
+                }
+            }
+            // Check flag changes
+            for (const [flag, afterCond] of Object.entries(stateAfter.flags)) {
+                const beforeCond = stateBefore.flags[flag];
+                if (beforeCond !== afterCond) {
+                    changes.push({
+                        type: 'flag',
+                        name: flag,
+                        before: beforeCond || 'undefined',
+                        after: afterCond
+                    });
+                }
+            }
+            // Check stack changes
+            if (stateAfter.stack.items.length !== stateBefore.stack.items.length) {
+                changes.push({
+                    type: 'stack',
+                    name: 'Stack',
+                    before: `${stateBefore.stack.items.length} items`,
+                    after: `${stateAfter.stack.items.length} items`
+                });
+            }
+            // Check memory changes
+            for (const [addr, afterVal] of Object.entries(stateAfter.memory)) {
+                const beforeVal = stateBefore.memory[addr];
+                const afterStr = formatValue(afterVal);
+                const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
+                if (!beforeVal || formatValue(beforeVal) !== afterStr) {
+                    changes.push({
+                        type: 'memory',
+                        name: `*${addr}`,
+                        before: beforeStr,
+                        after: afterStr
+                    });
+                }
+            }
+            // If we found changes, show them
+            if (changes.length > 0) {
+                const markdown = new vscode.MarkdownString();
+                markdown.appendMarkdown(`**${instruction}** - State Changes\n\n`);
+                // Group by type
+                const registerChanges = changes.filter(c => c.type === 'register');
+                const flagChanges = changes.filter(c => c.type === 'flag');
+                const stackChanges = changes.filter(c => c.type === 'stack');
+                const memoryChanges = changes.filter(c => c.type === 'memory');
+                if (registerChanges.length > 0) {
+                    markdown.appendMarkdown('**Registers:**\n```\n');
+                    registerChanges.forEach(change => {
+                        markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
+                    });
+                    markdown.appendMarkdown('```\n\n');
+                }
+                if (flagChanges.length > 0) {
+                    markdown.appendMarkdown('**Flags:**\n```\n');
+                    flagChanges.forEach(change => {
+                        markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
+                    });
+                    markdown.appendMarkdown('```\n\n');
+                }
+                if (stackChanges.length > 0) {
+                    markdown.appendMarkdown('**Stack:**\n```\n');
+                    stackChanges.forEach(change => {
+                        markdown.appendMarkdown(`${change.before} => ${change.after}\n`);
+                    });
+                    markdown.appendMarkdown('```\n\n');
+                }
+                if (memoryChanges.length > 0) {
+                    markdown.appendMarkdown('**Memory:**\n```\n');
+                    memoryChanges.forEach(change => {
+                        markdown.appendMarkdown(`${change.name}: ${change.before} => ${change.after}\n`);
+                    });
+                    markdown.appendMarkdown('```\n');
+                }
+                // Get instruction info from database
+                const instructionInfo = instr_1.instructionDatabase.get(instruction);
+                if (instructionInfo) {
+                    markdown.appendMarkdown('\n---\n\n');
+                    markdown.appendMarkdown(`*${instructionInfo.description}*`);
+                }
+                return new vscode.Hover(markdown);
+            }
+            return null;
+        }
+    };
+}
 function formatFunctionInfo(info) {
     const lines = [];
     lines.push(`**Function: \`${info.name}\`**\n`);
@@ -1148,6 +1585,51 @@ function activate(context) {
             vscode.window.showInformationMessage('Dead code detection disabled');
         }
     });
+    const registerStateProvider = new RegisterStateProvider();
+    const registerStateView = vscode.window.createTreeView('gas-asm.registerState', {
+        treeDataProvider: registerStateProvider,
+        showCollapseAll: true
+    });
+    context.subscriptions.push(registerStateView);
+    let updateTimeout;
+    context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(event => {
+        if (event.textEditor.document.languageId !== 'gas-asm') {
+            return;
+        }
+        if (updateTimeout) {
+            clearTimeout(updateTimeout);
+        }
+        updateTimeout = setTimeout(() => {
+            const line = event.selections[0].active.line;
+            registerStateProvider.updateState(event.textEditor.document, line);
+        }, 100);
+    }));
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
+        if (event.document.languageId !== 'gas-asm') {
+            return;
+        }
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document === event.document) {
+            if (updateTimeout) {
+                clearTimeout(updateTimeout);
+            }
+            updateTimeout = setTimeout(() => {
+                const line = editor.selection.active.line;
+                registerStateProvider.updateState(editor.document, line);
+            }, 100);
+        }
+    }));
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(editor => {
+        if (editor && editor.document.languageId === 'gas-asm') {
+            const line = editor.selection.active.line;
+            registerStateProvider.updateState(editor.document, line);
+        }
+    }));
+    if (vscode.window.activeTextEditor?.document.languageId === 'gas-asm') {
+        const editor = vscode.window.activeTextEditor;
+        const line = editor.selection.active.line;
+        registerStateProvider.updateState(editor.document, line);
+    }
     context.subscriptions.push(cpuStatusBarItem, vscode.commands.registerCommand('gas-asm.selectTargetCpu', async () => {
         const cpus = ['skylake', 'haswell', 'icelake', 'zen2', 'zen3', 'm1', 'generic'];
         const selected = await vscode.window.showQuickPick(cpus, {
@@ -1357,184 +1839,7 @@ function activate(context) {
             return items;
         }
     }, '.', '%');
-    const hoverProvider = vscode.languages.registerHoverProvider('gas-asm', {
-        provideHover(document, position) {
-            const range = document.getWordRangeAtPosition(position, /[.%]?[a-zA-Z_][a-zA-Z0-9_().]*/);
-            if (!range) {
-                return null;
-            }
-            const word = document.getText(range);
-            const line = document.lineAt(position).text;
-            const config = vscode.workspace.getConfiguration('gas-asm.performance');
-            const targetCPU = config.get('targetCPU', 'skylake');
-            // const posKey = `${document.uri.toString()}:${position.line}:${position.character}`;
-            // const currentTab = context.workspaceState.get<string>(`hover.${posKey}.tab`, 'info');
-            if (word === 'syscall') {
-                const markdown = new vscode.MarkdownString();
-                markdown.appendMarkdown('**System Call**\n\n');
-                const fullState = analyzeRegisters(document, position.line);
-                const raxValue = fullState.registers['%rax'];
-                let syscallNum = null;
-                if (raxValue && raxValue.type === 'immediate') {
-                    syscallNum = raxValue.value;
-                }
-                if (syscallNum !== null && syscall_1.LINUX_SYSCALLS.has(syscallNum)) {
-                    const syscallInfo = syscall_1.LINUX_SYSCALLS.get(syscallNum);
-                    markdown.appendMarkdown(`**Syscall \`${syscallInfo.name}\` (${syscallNum})**\n\n`);
-                    markdown.appendMarkdown(`${syscallInfo.description}\n\n`);
-                    if (syscallInfo.parameters.length > 0) {
-                        markdown.appendMarkdown('**Parameters:**\n```\n');
-                        syscallInfo.parameters.forEach(param => {
-                            markdown.appendMarkdown(`${param}\n`);
-                        });
-                        markdown.appendMarkdown('```\n\n');
-                        markdown.appendMarkdown('**Current arguments:**\n```\n');
-                        const argRegs = ['%rdi', '%rsi', '%rdx', '%r10', '%r8', '%r9'];
-                        syscallInfo.parameters.forEach((_param, i) => {
-                            const reg = argRegs[i];
-                            const val = fullState.registers[reg];
-                            if (val) {
-                                markdown.appendMarkdown(`${reg} = ${formatValue(val)}\n`);
-                            }
-                        });
-                        markdown.appendMarkdown('```\n');
-                    }
-                    else {
-                        markdown.appendMarkdown('**Parameters:** None\n\n');
-                    }
-                    markdown.appendMarkdown(`**Returns:** ${syscallInfo.returns}\n\n`);
-                    if (syscallInfo.errors) {
-                        markdown.appendMarkdown(`**Errors:** ${syscallInfo.errors}\n\n`);
-                    }
-                }
-                else {
-                    markdown.appendMarkdown(`**Syscall Number Not Recognized (${syscallNum})**\n\n`);
-                }
-                return new vscode.Hover(markdown);
-            }
-            const callMatch = line.match(/^\s*call[q]?\s+([a-zA-Z_][a-zA-Z0-9_]*)/);
-            if (callMatch && callMatch[1] === word) {
-                const functionInfo = analyzeFunctionInterface(document, word);
-                const markdown = new vscode.MarkdownString();
-                if (functionInfo) {
-                    const infoLines = formatFunctionInfo(functionInfo);
-                    infoLines.forEach(line => markdown.appendMarkdown(line + '\n'));
-                }
-                else {
-                    markdown.appendMarkdown(`**Function Call: \`${word}\`**\n\n`);
-                    markdown.appendMarkdown('*External function or definition not found in current file*\n\n');
-                    // Show System V AMD64 ABI info
-                    markdown.appendMarkdown('**Standard Calling Convention (System V AMD64 ABI):**\n');
-                    markdown.appendMarkdown('```\n');
-                    markdown.appendMarkdown('Parameters: %rdi, %rsi, %rdx, %rcx, %r8, %r9\n');
-                    markdown.appendMarkdown('Return: %rax (integer), %xmm0 (float)\n');
-                    markdown.appendMarkdown('Clobbered: %rax, %rcx, %rdx, %rsi, %rdi, %r8-%r11\n');
-                    markdown.appendMarkdown('Preserved: %rbx, %rbp, %r12-%r15\n');
-                    markdown.appendMarkdown('```\n');
-                }
-                return new vscode.Hover(markdown);
-            }
-            // Check for directives
-            if (word.startsWith('.')) {
-                const directiveInfo = directive_1.directiveDatabase.get(word);
-                if (directiveInfo) {
-                    const markdown = new vscode.MarkdownString();
-                    markdown.appendMarkdown(`**${word}**\n\n`);
-                    markdown.appendMarkdown(`${directiveInfo.description}\n\n`);
-                    if (directiveInfo.usage) {
-                        markdown.appendCodeblock(directiveInfo.usage, 'gas-asm');
-                    }
-                    return new vscode.Hover(markdown);
-                }
-            }
-            // Check for registers
-            if (word.startsWith('%')) {
-                const registerInfo = register_1.registerDatabase.get(word);
-                const markdown = new vscode.MarkdownString();
-                if (registerInfo) {
-                    markdown.appendMarkdown(`**${word}** (${registerInfo.size}-bit)\n\n`);
-                    markdown.appendMarkdown(`${registerInfo.description}\n\n`);
-                    markdown.appendMarkdown(`*Type:* ${registerInfo.type}\n\n`);
-                }
-                const fullState = analyzeRegisters(document, position.line);
-                const normalizedReg = normalizeRegister(word);
-                const regCategory = getRegisterCategory(word);
-                const value = fullState.registers[normalizedReg];
-                if (value) {
-                    markdown.appendMarkdown('---\n\n');
-                    markdown.appendMarkdown(`**Current Value:**\n\n`);
-                    const formattedValue = formatValue(value);
-                    markdown.appendCodeblock(formattedValue, 'text');
-                    const allStates = [];
-                    for (const [reg, val] of Object.entries(fullState.registers)) {
-                        if (val.type !== 'unknown') {
-                            const thisCategory = getRegisterCategory(reg);
-                            // Show GPR with GPR, SIMD with SIMD, etc.
-                            if (thisCategory === regCategory || regCategory === 'gpr') {
-                                allStates.push(`${reg} = ${formatValue(val)}`);
-                            }
-                        }
-                    }
-                    if (allStates.length > 1) {
-                        const categoryName = regCategory === 'gpr' ? 'general purpose registers' :
-                            regCategory === 'simd' ? 'SIMD registers' :
-                                regCategory === 'fpu' ? 'FPU registers' : 'registers';
-                        markdown.appendMarkdown(`\n*All known ${categoryName} at this point:*\n\n`);
-                        markdown.appendCodeblock(allStates.join('\n'), 'text');
-                    }
-                    const stackLines = formatStack(fullState.stack);
-                    if (stackLines.length > 0) {
-                        markdown.appendMarkdown('\n');
-                        stackLines.forEach(line => markdown.appendMarkdown(line + '\n'));
-                    }
-                    // Show memory state (only stack/frame-relative addresses for clarity)
-                    const memoryItems = Object.entries(fullState.memory).filter(([addr]) => addr.includes('%rsp') || addr.includes('%rbp'));
-                    if (memoryItems.length > 0) {
-                        markdown.appendMarkdown('\n**Memory (stack frame):**\n\n');
-                        markdown.appendCodeblock(memoryItems.map(([addr, val]) => `${addr} = ${formatValue(val)}`).join('\n'), 'text');
-                    }
-                    // Show other memory separately if present
-                    const otherMemory = Object.entries(fullState.memory).filter(([addr]) => !addr.includes('%rsp') && !addr.includes('%rbp'));
-                    if (otherMemory.length > 0 && otherMemory.length <= 3) {
-                        markdown.appendMarkdown('\n**Other Memory:**\n\n');
-                        markdown.appendCodeblock(otherMemory.map(([addr, val]) => `*${addr} = ${formatValue(val)}`).join('\n'), 'text');
-                    }
-                    // Show flag state
-                    const flagStr = formatFlags(fullState.flags);
-                    if (flagStr) {
-                        markdown.appendMarkdown(`\n**Flags:** ${flagStr}\n`);
-                    }
-                }
-                return new vscode.Hover(markdown);
-            }
-            // Check for instructions
-            const instructionInfo = instr_1.instructionDatabase.get(word);
-            if (instructionInfo) {
-                const markdown = new vscode.MarkdownString();
-                markdown.appendMarkdown(`**${word}** - ${instructionInfo.description}\n\n`);
-                markdown.appendCodeblock(`${word} ${instructionInfo.operands}`, 'gas-asm');
-                if (instructionInfo.category) {
-                    markdown.appendMarkdown(`\n*Category:* ${instructionInfo.category}`);
-                }
-                if (instructionInfo.flags) {
-                    markdown.appendMarkdown(`\n\n*Flags Affected:* ${instructionInfo.flags}`);
-                }
-                if (instructionInfo.performance) {
-                    const perf = instructionInfo.performance[targetCPU];
-                    if (perf) {
-                        markdown.appendMarkdown(`\n\n*Performance (${targetCPU}):* `);
-                        markdown.appendMarkdown(`${perf.latency}cy latency, ${perf.throughput.toFixed(2)} CPI, ${perf.sizeBytes}B`);
-                    }
-                }
-                if (instructionInfo.alternatives && instructionInfo.alternatives.length > 0) {
-                    markdown.appendMarkdown(`\n\n[View ${instructionInfo.alternatives.length} alternative${instructionInfo.alternatives.length > 1 ? 's' : ''}](command:gas-asm.showAlternatives?${encodeURIComponent(JSON.stringify({ instruction: word }))})`);
-                }
-                markdown.isTrusted = true;
-                return new vscode.Hover(markdown);
-            }
-            return null;
-        }
-    });
+    const hoverProvider = vscode.languages.registerHoverProvider('gas-asm', createHoverProvider());
     const signatureHelpProvider = vscode.languages.registerSignatureHelpProvider('gas-asm', {
         provideSignatureHelp(document, position) {
             const line = document.lineAt(position).text;
