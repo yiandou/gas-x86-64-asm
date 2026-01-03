@@ -15,3 +15,6 @@ Currently only has support for the x86_64/AMD64 architecture.
 - Call graphs
 - Function/Label call analysis
 - Drop-in alternatives
+
+## Comment logic
+Just whatever I'm gonna forget is commented, painfully so.

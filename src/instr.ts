@@ -181,6 +181,50 @@ export const instructionDatabase: Map<string, InstructionInfo> = new Map([
     ['movzb', { description: 'Move byte with zero extension', operands: 'src8, dest', category: 'Data Transfer' }],
     ['movzw', { description: 'Move word with zero extension', operands: 'src16, dest', category: 'Data Transfer' }],
     ['bswap', { description: 'Byte swap (reverse byte order)', operands: 'reg32/64', category: 'Data Transfer' }],
+    ['bswapb', {
+        description: 'Byte swap for byte (8-bit, essentially a no-op)',
+        operands: 'reg8',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['bswapw', {
+        description: 'Byte swap for word (16-bit)',
+        operands: 'reg16',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 4, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 4, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 4, category: 'optimal' }
+        }
+    }],
+    ['bswapl', {
+        description: 'Byte swap for long (32-bit)',
+        operands: 'reg32',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 2, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 2, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 2, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 2, category: 'optimal' }
+        }
+    }],
+    ['bswapq', {
+        description: 'Byte swap for quadword (64-bit)',
+        operands: 'reg64',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p15'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
     ['cmpxchg8b', { description: 'Compare and exchange 8 bytes', operands: 'mem64', category: 'Data Transfer', flags: 'ZF' }],
     ['cmpxchg16b', { description: 'Compare and exchange 16 bytes', operands: 'mem128', category: 'Data Transfer', flags: 'ZF' }],
 
@@ -1348,6 +1392,50 @@ export const instructionDatabase: Map<string, InstructionInfo> = new Map([
             'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
         }
     }],
+    ['btb', {
+        description: 'Bit test in byte (8-bit)',
+        operands: 'bin_index8, bit_base8',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
+        }
+    }],
+    ['btw', {
+        description: 'Bit test in word (16-bit)',
+        operands: 'bin_index16, bit_base16',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 5, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 5, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 5, category: 'optimal' }
+        }
+    }],
+    ['btl', {
+        description: 'Bit test in long (32-bit)',
+        operands: 'bin_index32, bit_base32',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
+        }
+    }],
+    ['btq', {
+        description: 'Bit test in quadword (64-bit)',
+        operands: 'bin_index64, bit_base64',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 5, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 5, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 5, category: 'optimal' }
+        }
+    }],
     ['bts', {
         description: 'Bit test and set',
         operands: 'bit_index, bit_base',
@@ -1358,6 +1446,50 @@ export const instructionDatabase: Map<string, InstructionInfo> = new Map([
             'zen3': { latency: 1, throughput: 1, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
             'alderlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
             'raptorlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
+        }
+    }],
+    ['btsb', {
+        description: 'Bit test and set in byte (8-bit)',
+        operands: 'bit_index8, bit_base8',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
+        }
+    }],
+    ['btsw', {
+        description: 'Bit test and set in word (16-bit)',
+        operands: 'bit_index16, bit_base16',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 5, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 5, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 5, category: 'optimal' }
+        }
+    }],
+    ['btsl', {
+        description: 'Bit test and set in long (32-bit)',
+        operands: 'bit_index32, bit_base32',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 4, category: 'optimal' }
+        }
+    }],
+    ['btsq', {
+        description: 'Bit test and set in quadword (64-bit)',
+        operands: 'bit_index64, bit_base64',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 5, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 5, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 1, ports: ['p06'], sizeBytes: 5, category: 'optimal' }
         }
     }],
     ['btr', {
@@ -1432,6 +1564,50 @@ export const instructionDatabase: Map<string, InstructionInfo> = new Map([
             'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' }
         }
     }],
+    ['lzcntb', {
+        description: 'Count leading zero bits in byte (8-bit)',
+        operands: 'src8, dest8',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' }
+        }
+    }],
+    ['lzcntw', {
+        description: 'Count leading zero bits in word (16-bit)',
+        operands: 'src16, dest16',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' }
+        }
+    }],
+    ['lzcntl', {
+        description: 'Count leading zero bits in long (32-bit)',
+        operands: 'src32, dest32',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' }
+        }
+    }],
+    ['lzcntq', {
+        description: 'Count leading zero bits in quadword (64-bit)',
+        operands: 'src64, dest64',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' }
+        }
+    }],
     ['tzcnt', {
         description: 'Count trailing zero bits',
         operands: 'src, dest',
@@ -1444,9 +1620,97 @@ export const instructionDatabase: Map<string, InstructionInfo> = new Map([
             'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' }
         }
     }],
+    ['tzcntb', {
+        description: 'Count trailing zero bits in byte (8-bit)',
+        operands: 'src8, dest8',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' }
+        }
+    }],
+    ['tzcntw', {
+        description: 'Count trailing zero bits in word (16-bit)',
+        operands: 'src16, dest16',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' }
+        }
+    }],
+    ['tzcntl', {
+        description: 'Count trailing zero bits in long (32-bit)',
+        operands: 'src32, dest32',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' }
+        }
+    }],
+    ['tzcntq', {
+        description: 'Count trailing zero bits in quadword (64-bit)',
+        operands: 'src64, dest64',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' }
+        }
+    }],
     ['popcnt', {
         description: 'Count number of bits set to 1',
         operands: 'src, dest',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' }
+        }
+    }],
+    ['popcntb', {
+        description: 'Count number of set bits in byte (8-bit)',
+        operands: 'src8, dest8',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' }
+        }
+    }],
+    ['popcntw', {
+        description: 'Count number of set bits in word (16-bit)',
+        operands: 'src16, dest16',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 5, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' }
+        }
+    }],
+    ['popcntl', {
+        description: 'Count number of set bits in long (32-bit)',
+        operands: 'src32, dest32',
+        category: 'Bit Manipulation',
+        performance: {
+            'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'zen3': { latency: 1, throughput: 0.25, ports: ['p0123'], sizeBytes: 4, category: 'optimal' },
+            'alderlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' },
+            'raptorlake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 4, category: 'moderate' }
+        }
+    }],
+    ['popcntq', {
+        description: 'Count number of set bits in quadword (64-bit)',
+        operands: 'src64, dest64',
         category: 'Bit Manipulation',
         performance: {
             'skylake': { latency: 3, throughput: 1, ports: ['p1'], sizeBytes: 5, category: 'moderate' },
@@ -1854,10 +2118,164 @@ export const instructionDatabase: Map<string, InstructionInfo> = new Map([
     ['fabs', { description: 'FPU absolute value of ST(0)', operands: '', category: 'FPU' }],
     ['fchs', { description: 'FPU change sign of ST(0)', operands: '', category: 'FPU' }],
     ['fld', { description: 'FPU load floating point value onto stack', operands: 'src', category: 'FPU' }],
+    ['fldl', {
+        description: 'Load double-precision float to FPU stack',
+        operands: 'src',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 4, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['flds', {
+        description: 'Load single-precision float to FPU stack',
+        operands: 'src',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 4, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['fldt', {
+        description: 'Load extended-precision (80-bit) float to FPU stack',
+        operands: 'src80',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 4, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 5, throughput: 0.5, ports: ['p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['fildl', {
+        description: 'Load integer long (32-bit) to FPU stack and convert to float',
+        operands: 'src32',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 5, throughput: 0.5, ports: ['p01', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['filds', {
+        description: 'Load integer short (16-bit) to FPU stack and convert to float',
+        operands: 'src16',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 5, throughput: 0.5, ports: ['p01', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['fildq', {
+        description: 'Load integer quadword (64-bit) to FPU stack and convert to float',
+        operands: 'src64',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 4, category: 'moderate' },
+            'zen3': { latency: 5, throughput: 0.5, ports: ['p01', 'p23'], sizeBytes: 4, category: 'moderate' },
+            'alderlake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 4, category: 'moderate' },
+            'raptorlake': { latency: 6, throughput: 1, ports: ['p01', 'p23'], sizeBytes: 4, category: 'moderate' }
+        }
+    }],
     ['fld1', { description: 'FPU push +1.0 onto stack', operands: '', category: 'FPU' }],
     ['fldz', { description: 'FPU push +0.0 onto stack', operands: '', category: 'FPU' }],
     ['fldpi', { description: 'FPU push π onto stack', operands: '', category: 'FPU' }],
     ['fst', { description: 'FPU store ST(0) to memory or register', operands: 'dest', category: 'FPU' }],
+    ['fstpl', {
+        description: 'Store double-precision float from FPU stack and pop',
+        operands: 'dest',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 4, throughput: 0.5, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['fstps', {
+        description: 'Store single-precision float from FPU stack and pop',
+        operands: 'dest',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 4, throughput: 0.5, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['fstpt', {
+        description: 'Store extended-precision (80-bit) float from FPU stack and pop',
+        operands: 'dest80',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 4, throughput: 0.5, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['fstl', {
+        description: 'Store double-precision float from FPU stack (no pop)',
+        operands: 'dest',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 4, throughput: 0.5, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['fsts', {
+        description: 'Store single-precision float from FPU stack (no pop)',
+        operands: 'dest',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'zen3': { latency: 4, throughput: 0.5, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'raptorlake': { latency: 5, throughput: 1, ports: ['p4', 'p23'], sizeBytes: 3, category: 'moderate' }
+        }
+    }],
+    ['fistpl', {
+        description: 'Store integer long (32-bit) from FPU stack and pop',
+        operands: 'dest32',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 3, category: 'slow' },
+            'zen3': { latency: 6, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 3, category: 'slow' },
+            'raptorlake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 3, category: 'slow' }
+        }
+    }],
+    ['fistps', {
+        description: 'Store integer short (16-bit) from FPU stack and pop',
+        operands: 'dest16',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 3, category: 'slow' },
+            'zen3': { latency: 6, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 3, category: 'moderate' },
+            'alderlake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 3, category: 'slow' },
+            'raptorlake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 3, category: 'slow' }
+        }
+    }],
+    ['fistpq', {
+        description: 'Store integer quadword (64-bit) from FPU stack and pop',
+        operands: 'dest64',
+        category: 'Floating Point',
+        performance: {
+            'skylake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 4, category: 'slow' },
+            'zen3': { latency: 6, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 4, category: 'moderate' },
+            'alderlake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 4, category: 'slow' },
+            'raptorlake': { latency: 7, throughput: 1, ports: ['p01', 'p4', 'p23'], sizeBytes: 4, category: 'slow' }
+        }
+    }],
     ['fstp', { description: 'FPU store ST(0) and pop', operands: 'dest', category: 'FPU' }],
     ['fxch', { description: 'FPU exchange ST(0) with ST(i)', operands: '[st(i)]', category: 'FPU' }],
     ['fcom', { description: 'FPU compare ST(0) with source', operands: '[src]', category: 'FPU' }],
@@ -1950,4 +2368,347 @@ export const instructionDatabase: Map<string, InstructionInfo> = new Map([
     ['swapgs', { description: 'Swap GS base with KernelGSBase MSR', operands: '', category: 'System' }],
     ['rdrand', { description: 'Read random number from hardware RNG', operands: 'dest', category: 'Random' }],
     ['rdseed', { description: 'Read random seed from hardware RNG', operands: 'dest', category: 'Random' }],
+
+    // Needs sorting
+    ['sete', {
+        description: 'Set byte if equal (ZF=1)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setz', {
+        description: 'Set byte if zero (ZF=1, alias for sete)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setne', {
+        description: 'Set byte if not equal (ZF=0)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnz', {
+        description: 'Set byte if not zero (ZF=0, alias for setne)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setg', {
+        description: 'Set byte if greater (signed, ZF=0 and SF=OF)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnle', {
+        description: 'Set byte if not less or equal (signed, alias for setg)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setge', {
+        description: 'Set byte if greater or equal (signed, SF=OF)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnl', {
+        description: 'Set byte if not less (signed, alias for setge)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setl', {
+        description: 'Set byte if less (signed, SF≠OF)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnge', {
+        description: 'Set byte if not greater or equal (signed, alias for setl)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setle', {
+        description: 'Set byte if less or equal (signed, ZF=1 or SF≠OF)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setng', {
+        description: 'Set byte if not greater (signed, alias for setle)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['seta', {
+        description: 'Set byte if above (unsigned, CF=0 and ZF=0)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnbe', {
+        description: 'Set byte if not below or equal (unsigned, alias for seta)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setae', {
+        description: 'Set byte if above or equal (unsigned, CF=0)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnb', {
+        description: 'Set byte if not below (unsigned, alias for setae)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnc', {
+        description: 'Set byte if not carry (CF=0, alias for setae)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setb', {
+        description: 'Set byte if below (unsigned, CF=1)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnae', {
+        description: 'Set byte if not above or equal (unsigned, alias for setb)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setc', {
+        description: 'Set byte if carry (CF=1, alias for setb)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setbe', {
+        description: 'Set byte if below or equal (unsigned, CF=1 or ZF=1)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setna', {
+        description: 'Set byte if not above (unsigned, alias for setbe)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['sets', {
+        description: 'Set byte if sign (SF=1)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setns', {
+        description: 'Set byte if not sign (SF=0)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['seto', {
+        description: 'Set byte if overflow (OF=1)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setno', {
+        description: 'Set byte if not overflow (OF=0)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setp', {
+        description: 'Set byte if parity (PF=1)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setpe', {
+        description: 'Set byte if parity even (PF=1, alias for setp)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setnp', {
+        description: 'Set byte if not parity (PF=0)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['setpo', {
+        description: 'Set byte if parity odd (PF=0, alias for setnp)',
+        operands: 'dest',
+        category: 'Control Flow',
+        performance: {
+            'skylake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'zen3': { latency: 1, throughput: 0.5, ports: ['p01'], sizeBytes: 3, category: 'optimal' },
+            'alderlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' },
+            'raptorlake': { latency: 1, throughput: 0.5, ports: ['p06'], sizeBytes: 3, category: 'optimal' }
+        }
+    }],
+    ['cmpxchgq', {
+        description: 'Compare and exchange quadword (64-bit) - atomic read-modify-write',
+        operands: 'src64, dest64',
+        category: 'Data Transfer',
+        performance: {
+            'skylake': { latency: 5, throughput: 5, ports: ['p0156', 'p23', 'p4'], sizeBytes: 4, category: 'slow' },
+            'zen3': { latency: 4, throughput: 4, ports: ['p0123', 'p23', 'p4'], sizeBytes: 4, category: 'slow' },
+            'alderlake': { latency: 5, throughput: 5, ports: ['p0156', 'p23', 'p4'], sizeBytes: 4, category: 'slow' },
+            'raptorlake': { latency: 5, throughput: 5, ports: ['p0156', 'p23', 'p4'], sizeBytes: 4, category: 'slow' }
+        }
+    }],
 ]);

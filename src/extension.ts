@@ -4,6 +4,8 @@ import { instructionDatabase } from './instr';
 import { LINUX_SYSCALLS } from './syscall';
 import { registerDatabase } from './register';
 import { directiveDatabase } from './directive';
+import { parse } from 'path';
+import { stat } from 'fs';
 
 function escapeHtml(text: string): string {
     return text
@@ -365,7 +367,7 @@ function analyzeFunctionInterface(document: vscode.TextDocument, functionName: s
                     registersRead.add(reg);
                 }
             }
-        } else if (instr.match(/^(add|sub|and|or|xor|imul|shl|shr|sar|sal|adc|sbb)/)) {
+        } else if (instr.match(/^(sub|and|or|xor|imul|shl|shr|sar|sal|adc|sbb)/)) {
             // Two-operand arithmetic: both read, second written
             if (operands.length === 2) {
                 // First operand is always read
@@ -1621,24 +1623,39 @@ function analyzeRegisters(document: vscode.TextDocument, targetLine: number): ty
                 const dest = operands[1];
 
                 // Check if destination is memory
-                const memMatch = dest.match(/^(-?\d+)?\((%[a-z0-9]+)\)$/);
+                const memMatch = dest.match(/^(-?\d+)?\((%[a-z0-9]+)(?:,\s*(%[a-z0-9]+)(?:,\s*([1248]))?)?\)$/);
                 if (memMatch) {
                     const offset = memMatch[1] ? parseInt(memMatch[1]) : 0;
                     const baseReg = normalizeRegister(memMatch[2]);
+                    const indexReg = memMatch[3] ? normalizeRegister(memMatch[3]) : null;
+                    const scale = memMatch[4] ? parseInt(memMatch[4]) : 1;
+
                     const baseVal = state.registers[baseReg] || { type: 'symbolic', expr: baseReg };
+                    const indexVal = indexReg ? (state.registers[indexReg] || { type: 'symbolic', expr: indexReg }) : null;
 
-                    let addr: types.RegisterValue;
-                    if (offset === 0) {
-                        addr = baseVal;
-                    } else {
-                        addr = evaluateBinary('+', baseVal, { type: 'immediate', value: offset });
-                    }
+                    if (baseVal.type === 'immediate' && (!indexVal || indexVal.type === 'immediate')) {
+                        let addr = baseVal.value + offset;
+                        if (indexVal && indexVal.type === 'immediate') {
+                            addr += indexVal.value * scale;
+                        }
 
-                    const memKey = getMemoryKey(addr);
-                    if (memKey) {
+                        const memKey = `0x${addr.toString(16)}`;
                         state.memory[memKey] = src;
+                    } else {
+                        let addrExpr = formatValue(baseVal);
+                        if (offset !== 0) {
+                            addrExpr += offset > 0 ? ` + ${offset}` : ` - ${-offset}`;
+                        }
+                        if (indexVal) {
+                            if (scale === 1) {
+                                addrExpr += ` + ${formatValue(indexVal)}`;
+                            } else {
+                                addrExpr += ` + ${formatValue(indexVal)} * ${scale}`;
+                            }
+                        }
+                        state.memory[addrExpr] = src;
                     }
-                    continue; // Don't process as register move
+                    continue;
                 }
 
                 // Memory load: mov (%reg), dest or mov offset(%reg), dest
@@ -1676,31 +1693,120 @@ function analyzeRegisters(document: vscode.TextDocument, targetLine: number): ty
 
         // Handle comparison and set flags
         else if (instr.match(/^cmp[bwlq]?$/)) {
-            // cmp src, dest - computes dest - src and sets flags
             if (operands.length === 2) {
                 const src = parseOperand(operands[0]);
                 const dest = parseOperand(operands[1]);
-                const destStr = formatValue(dest);
-                const srcStr = formatValue(src);
 
-                state.flags.ZF = `${destStr} == ${srcStr}`;
-                state.flags.CF = `${destStr} < ${srcStr} (unsigned)`;
-                state.flags.SF = `${destStr} < ${srcStr} (signed)`;
+                if (src.type === 'immediate' && dest.type === 'immediate') {
+                    const result = dest.value - src.value;
+
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.CF = dest.value < src.value ? '1' : '0';
+                    state.flags.SF = result < 0 ? '1' : '0';
+                    state.flags.OF = ((dest.value ^ src.value) & (dest.value ^ result)) < 0 ? '1' : '0';
+                } else {
+                    const destStr = dest.type === 'register' ? formatValue(state.registers[normalizeRegister(dest.reg)] || dest) : formatValue(dest);
+                    const srcStr = formatValue(src);
+
+                    state.flags.ZF = `${destStr} == ${srcStr}`;
+                    state.flags.CF = `${destStr} < ${srcStr} (unsigned)`;
+                    state.flags.SF = `${destStr} < ${srcStr} (signed)`;
+                }
             }
         } else if (instr.match(/^test[bwlq]?$/)) {
             // test src, dest - computes dest & src and sets flags
             if (operands.length === 2) {
                 const src = parseOperand(operands[0]);
                 const dest = parseOperand(operands[1]);
-                const destStr = formatValue(dest);
-                const srcStr = formatValue(src);
 
-                state.flags.ZF = `(${destStr} & ${srcStr}) == 0`;
-                state.flags.SF = `(${destStr} & ${srcStr}) < 0`;
+                if (src.type === 'immediate' && dest.type === 'immediate') {
+                    const result = dest.value & src.value;
+
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = result < 0 ? '1' : '0';
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+                } else {
+                    const destStr = dest.type === 'register' ? formatValue(state.registers[normalizeRegister(dest.reg)] || dest) : formatValue(dest);
+                    const srcStr = formatValue(src);
+
+                    state.flags.ZF = `(${destStr} & ${srcStr}) == 0`;
+                    state.flags.SF = `(${destStr} & ${srcStr}) < 0`;
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+                }
+            }
+        } else if (instr.match(/^add[bwlq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
+                    const signBit = 1 << (bits - 1);
+
+                    const result = currentVal.value + src.value;
+                    const maskedResult = result & maxVal;
+
+                    state.registers[destReg] = { type: 'immediate', value: maskedResult };
+
+                    state.flags.ZF = maskedResult === 0 ? '1' : '0';
+                    state.flags.SF = (maskedResult & signBit) ? '1' : '0';
+                    state.flags.CF = result > maxVal ? '1' : '0';
+
+                    const srcSign = src.value & signBit;
+                    const destSign = currentVal.value & signBit;
+                    const resultSign = maskedResult & signBit;
+                    state.flags.OF = (srcSign === destSign && srcSign !== resultSign) ? '1' : '0';
+
+                    state.flags.AF = ((currentVal.value & 0xF) + (src.value & 0xF)) > 0xF ? '1' : '0';
+                } else {
+                    state.registers[destReg] = evaluateBinary('+', currentVal, src);
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = 'carry';
+                    state.flags.OF = 'overflow';
+                }
+            }
+        } else if (instr.match(/^sub[bwlq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
+                    const signBit = 1 << (bits - 1);
+
+                    const result = currentVal.value - src.value;
+                    const maskedResult = result & maxVal;
+
+                    state.registers[destReg] = { type: 'immediate', value: maskedResult };
+
+                    state.flags.ZF = maskedResult === 0 ? '1' : '0';
+                    state.flags.SF = (maskedResult & signBit) ? '1' : '0';
+                    state.flags.CF = currentVal.value < src.value ? '1' : '0';
+
+                    const srcSign = src.value & signBit;
+                    const destSign = currentVal.value & signBit;
+                    const resultSign = maskedResult & signBit;
+                    state.flags.OF = (srcSign !== destSign && resultSign === srcSign) ? '1' : '0';
+
+                    state.flags.AF = ((currentVal.value & 0xF) - (src.value & 0xF)) < 0 ? '1' : '0';
+                } else {
+                    state.registers[destReg] = evaluateBinary('-', currentVal, src);
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = 'borrow';
+                    state.flags.OF = 'overflow';
+                }
             }
         }
 
-        // Handle SSE/AVX/FPU instructions (keeping existing logic)
+        // SSE/AVX/FPU
         else if (instr.match(/^(movaps|movups|movapd|movupd|movss|movsd|movdqa|movdqu)$/)) {
             if (operands.length === 2 && operands[1].startsWith('%')) {
                 const src = parseOperand(operands[0]);
@@ -1780,22 +1886,97 @@ function analyzeRegisters(document: vscode.TextDocument, targetLine: number): ty
                     state.registers[destReg] = { type: 'symbolic', expr: `${formatValue(currentVal)} ${op} ${formatValue(src)}` };
                 }
             }
-        } else if (instr.match(/^(fld|fild|fst|fstp|fist|fistp)$/)) {
-            if (instr.startsWith('fld') || instr.startsWith('fild')) {
-                state.registers['%st(0)'] = { type: 'symbolic', expr: `loaded from ${operands[0] || 'stack'}` };
-            } else if (instr.match(/^f(i)?stp?$/)) {
+        } else if (instr.match(/^f(add|sub|mul|div|subr|divr)p?$/)) {
+            // Exact same handling for both, symbolic as it operates on FPU stack, pretty complex
+            // TODO: track the FPU stack
+            if (instr.endsWith('p')) {
+                // Pop version
+                state.registers['%st(0)'] = { type: 'symbolic', expr: `fpu_${instr}` };
+            } else {
+                state.registers['%st(0)'] = { type: 'symbolic', expr: `fpu_${instr}` };
+            }
+        } else if (instr.match(/^f(sin|cos|sqrt|abs|chs|rndint)$/)) {
+            // Same here
+            state.registers['%st(0)'] = { type: 'symbolic', expr: `${instr}(%st(0))` };
+        } else if (instr.match(/^f(ld|ild|fld1|fldz|fldpi|fldl2e|fldl2t|fldlg2|fldln2)$/)) {
+            switch (instr) {
+                case 'fld1':
+                    state.registers['%st(0)'] = { type: 'symbolic', expr: '1.0' };
+                    break;
+                case 'fldz':
+                    state.registers['%st(0)'] = { type: 'symbolic', expr: '0.0' };
+                    break;
+                case 'fldpi':
+                    state.registers['%st(0)'] = { type: 'symbolic', expr: `π` };
+                    break;
+                case 'fldl2e':
+                    state.registers['%st(0)'] = { type: 'symbolic', expr: `log2(e)` };
+                    break;
+                case 'fldl2t':
+                    state.registers['%st(0)'] = { type: 'symbolic', expr: `log2(10)` };
+                    break;
+                case 'fldlg2':
+                    state.registers['%st(0)'] = { type: 'symbolic', expr: `log10(2)` };
+                    break;
+                case 'fldln2':
+                    state.registers['%st(0)'] = { type: 'symbolic', expr: `ln(2)` };
+                    break;
+                default:
+                    state.registers['%st(0)'] = { type: 'symbolic', expr: `load_from${operands[0] || 'stack'}` };
+            }
+        } else if (instr.match(/^f(st|stp|ist|istp)$/)) {
+            if (instr.endsWith('p')) {
                 state.registers['%st(0)'] = { type: 'unknown' };
             }
-        } else if (instr.match(/^(fadd|fsub|fmul|fdiv)p?$/)) {
-            state.registers['%st(0)'] = { type: 'symbolic', expr: `FPU ${instr}` };
-        } else if (instr.match(/^(fldz|fld1|fldpi)$/)) {
-            const value = instr === 'fldz' ? '0.0' : instr === 'fld1' ? '1.0' : 'π';
-            state.registers['%st(0)'] = { type: 'symbolic', expr: value };
+        } else if (instr.match(/^f(xch|free|nop)$/)) {
+            // FPU stack manip
+            if (instr === 'fxch') {
+                const temp = state.registers['%st(0)'];
+                state.registers['%st(0)'] = state.registers['%st(1)'] || { type: 'unknown' };
+                state.registers['%st(1)'] = temp || { type: 'unknown' };
+            } else if (instr === 'ffree') {
+                if (operands.length === 1) {
+                    state.registers[operands[0]] = { type: 'unknown' };
+                }
+            }
         } else if (instr.startsWith('lea')) {
-            // lea mem, dest - load effective address
             if (operands.length === 2) {
                 const destReg = normalizeRegister(operands[1]);
-                state.registers[destReg] = { type: 'symbolic', expr: `&${operands[0]}` };
+                const src = operands[0];
+
+                const complexMatch = src.match(/^(-?\d+)?\((%[a-z0-9]+)(?:,\s*(%a-z0-9+)(?:,\s*([1248]))?)?\)$/);
+                if (complexMatch) {
+                    const offset = complexMatch[1] ? parseInt(complexMatch[1]) : 0;
+                    const baseReg = normalizeRegister(complexMatch[2]);
+                    const indexReg = complexMatch[3] ? normalizeRegister(complexMatch[3]) : null;
+                    const scale = complexMatch[4] ? parseInt(complexMatch[4]) : 1;
+
+                    const baseVal = state.registers[baseReg] || { type: 'unknown' };
+                    const indexVal = indexReg ? (state.registers[indexReg] || { type: 'unknown' }) : null;
+
+                    if (baseVal.type === 'immediate' && (!indexVal || indexVal.type === 'immediate')) {
+                        let result = baseVal.value + offset;
+                        if (indexVal && indexVal.type === 'immediate') {
+                            result += indexVal.value * scale;
+                        }
+                        state.registers[destReg] = { type: 'immediate', value: result };
+                    } else {
+                        let expr = formatValue(baseVal);
+                        if (offset !== 0) {
+                            expr += offset > 0 ? ` + ${offset}` : ` - ${-offset}`;
+                        }
+                        if (indexVal) {
+                            if (scale === 1) {
+                                expr += ` + ${formatValue(indexVal)}`;
+                            } else {
+                                expr += ` + ${formatValue(indexVal)} * ${scale}`;
+                            }
+                        }
+                        state.registers[destReg] = { type: 'symbolic', expr };
+                    }
+                } else {
+                    state.registers[destReg] = { type: 'symbolic', expr: `&${src}` };
+                }
             }
         } else if (instr.startsWith('add')) {
             // add src, dest - dest = dest + src
@@ -1819,81 +2000,410 @@ function analyzeRegisters(document: vscode.TextDocument, targetLine: number): ty
                 state.flags.ZF = `result == 0`;
                 state.flags.SF = `result < 0`;
             }
-        } else if (instr.startsWith('imul') && operands.length === 2) {
-            // imul src, dest - dest = dest * src
-            const src = parseOperand(operands[0]);
-            const destReg = normalizeRegister(operands[1]);
-            const currentVal = state.registers[destReg] || { type: 'unknown' };
-            state.registers[destReg] = evaluateBinary('*', currentVal, src);
-        } else if (instr.startsWith('inc')) {
-            // inc dest - dest = dest + 1
+        } else if (instr.match(/^(imul)[bwlq]?$/)) {
             if (operands.length === 1) {
-                const destReg = normalizeRegister(operands[0]);
+                const src = parseOperand(operands[0]);
+                const raxVal = state.registers['%rax'] || { type: 'unknown' };
+
+                if (raxVal.type === 'immediate' && src.type === 'immediate') {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const result = BigInt(raxVal.value) * BigInt(src.value);
+                    const lowMask = (1n << BigInt(bits)) - 1n;
+
+                    const low = Number(result & lowMask);
+                    const high = Number(result >> BigInt(bits));
+
+                    state.registers['%rax'] = { type: 'immediate', value: low };
+                    state.registers['%rdx'] = { type: 'immediate', value: high };
+
+                    const signExtended = low < 0 ? -1 : 0;
+                    state.flags.CF = high !== signExtended ? '1' : '0';
+                    state.flags.OF = high !== signExtended ? '1' : '0';
+                } else {
+                    state.registers['%rax'] = evaluateBinary('*', raxVal, src);
+                    state.registers['%rdx'] = { type: 'symbolic', expr: 'high_bits' };
+                    state.flags.OF = 'overflow';
+                    state.flags.CF = 'carry';
+                }
+            } else if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
-                state.registers[destReg] = evaluateBinary('+', currentVal, { type: 'immediate', value: 1 });
+
+                if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const result = currentVal.value * src.value;
+                    const maskedResult = result & ((1 << bits) - 1);
+
+                    state.registers[destReg] = { type: 'immediate', value: maskedResult };
+
+                    state.flags.CF = result !== maskedResult ? '1' : '0';
+                    state.flags.OF = result !== maskedResult ? '1' : '0';
+                } else {
+                    state.registers[destReg] = evaluateBinary('*', currentVal, src);
+                    state.flags.OF = 'overflow';
+                    state.flags.CF = 'carry';
+                }
+            } else if (operands.length === 3) {
+                const src1 = parseOperand(operands[0]);
+                const src2 = parseOperand(operands[1]);
+                const destReg = normalizeRegister(operands[2]);
+
+                if (src1.type === 'immediate' && src2.type === 'immediate') {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const result = src1.value * src2.value;
+                    const maskedResult = result & ((1 << bits) - 1);
+
+                    state.registers[destReg] = { type: 'immediate', value: maskedResult };
+
+                    state.flags.CF = result !== maskedResult ? '1' : '0';
+                    state.flags.OF = result !== maskedResult ? '1' : '0';
+                } else {
+                    state.registers[destReg] = evaluateBinary('*', src1, src2);
+                    state.flags.OF = 'overflow';
+                    state.flags.CF = 'carry';
+                }
             }
-        } else if (instr.startsWith('dec')) {
-            // dec dest - dest = dest - 1
+        } else if (instr.match(/^(mul)[bwlq]?$/)) {
             if (operands.length === 1) {
-                const destReg = normalizeRegister(operands[0]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
-                state.registers[destReg] = evaluateBinary('-', currentVal, { type: 'immediate', value: 1 });
+                const src = parseOperand(operands[0]);
+                const raxVal = state.registers['%rax'] || { type: 'unknown' };
+
+                if (raxVal.type === 'immediate' && src.type === 'immediate') {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const result = BigInt(raxVal.value >>> 0) * BigInt(src.value >>> 0);
+                    const lowMask = (1n << BigInt(bits)) - 1n;
+
+                    const low = Number(result & lowMask);
+                    const high = Number(result >> BigInt(bits));
+
+                    state.registers['%rax'] = { type: 'immediate', value: low };
+                    state.registers['%rdx'] = { type: 'immediate', value: high };
+
+                    state.flags.CF = high !== 0 ? '1' : '0';
+                    state.flags.OF = high !== 0 ? '1' : '0';
+                } else {
+                    state.registers['%rax'] = evaluateBinary('*', raxVal, src);
+                    state.registers['%rdx'] = { type: 'symbolic', expr: 'high_bits' };
+                    state.flags.OF = 'overflow';
+                    state.flags.CF = 'carry';
+                }
             }
-        } else if (instr.startsWith('neg')) {
-            // neg dest - dest = -dest
+        } else if (instr.match(/^(div)[bwlq]?$/)) {
+            if (operands.length === 1) {
+                const divisor = parseOperand(operands[0]);
+                const raxVal = state.registers['%rax'] || { type: 'unknown' };
+                const rdxVal = state.registers['%rdx'] || { type: 'immediate', value: 0 };
+
+                if (raxVal.type === 'immediate' && rdxVal.type === 'immediate' && divisor.type === 'immediate' && divisor.value !== 0) {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const dividend = (BigInt(rdxVal.value >>> 0) << BigInt(bits)) | BigInt(raxVal.value >>> 0);
+                    const divisorBig = BigInt(divisor.value >>> 0);
+
+                    if (divisorBig !== 0n) {
+                        const quotient = Number(dividend / divisorBig);
+                        const remainder = Number(dividend % divisorBig);
+
+                        state.registers['%rax'] = { type: 'immediate', value: quotient };
+                        state.registers['%rdx'] = { type: 'immediate', value: remainder };
+                    } else {
+                        // Division by zero, result is undefined
+                        state.registers['%rax'] = { type: 'unknown' };
+                        state.registers['%rdx'] = { type: 'unknown' };
+                    }
+                } else {
+                    state.registers['%rax'] = { type: 'symbolic', expr: `${formatValue(raxVal)} / ${formatValue(divisor)}` };
+                    state.registers['%rdx'] = { type: 'symbolic', expr: `${formatValue(raxVal)} % ${formatValue(divisor)}` };
+                }
+
+                // Flags undef after div
+                state.flags = {};
+            }
+        } else if (instr.match(/^(idiv)[bwlq]?$/)) {
+            if (operands.length === 1) {
+                const divisor = parseOperand(operands[0]);
+                const raxVal = state.registers['%rax'] || { type: 'unknown' };
+                const rdxVal = state.registers['%rdx'] || { type: 'immediate', value: 0 };
+
+                if (raxVal.type === 'immediate' && rdxVal.type === 'immediate' && divisor.type === 'immediate' && divisor.value !== 0) {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+
+                    const dividendLow = BigInt(raxVal.value);
+                    const dividendHigh = BigInt(rdxVal.value);
+                    const dividend = (dividendHigh << BigInt(bits)) | (dividendLow & ((1n << BigInt(bits)) - 1n));
+                    const divisorBig = BigInt(divisor.value);
+
+                    if (divisorBig !== 0n) {
+                        const quotient = dividend / divisorBig;
+                        const remainder = dividend % divisorBig;
+
+                        state.registers['%rax'] = { type: 'immediate', value: Number(quotient) };
+                        state.registers['%rdx'] = { type: 'immediate', value: Number(remainder) };
+                    } else {
+                        state.registers['%rax'] = { type: 'unknown' };
+                        state.registers['%rdx'] = { type: 'unknown' };
+                    }
+                } else {
+                    state.registers['%rax'] = { type: 'symbolic', expr: `${formatValue(raxVal)} / ${formatValue(divisor)}` };
+                    state.registers['%rdx'] = { type: 'symbolic', expr: `${formatValue(raxVal)} % ${formatValue(divisor)}` };
+                }
+            }
+            state.flags = {};
+        }
+        else if (instr.match(/^(inc)[bwlq]?$/)) {
             if (operands.length === 1) {
                 const destReg = normalizeRegister(operands[0]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate') {
-                    state.registers[destReg] = { type: 'immediate', value: -currentVal.value };
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
+                    const signBit = 1 << (bits - 1);
+
+                    const result = currentVal.value + 1;
+                    const maskedResult = result & maxVal;
+
+                    state.registers[destReg] = { type: 'immediate', value: maskedResult };
+
+                    state.flags.ZF = maskedResult === 0 ? '1' : '0';
+                    state.flags.SF = (maskedResult & signBit) ? '1' : '0';
+
+                    state.flags.OF = currentVal.value === (signBit - 1) ? '1' : '0';
+                    state.flags.AF = (currentVal.value & 0xF) === 0xF ? '1' : '0';
                 } else {
-                    state.registers[destReg] = { type: 'symbolic', expr: `-${formatValue(currentVal)}` };
+                    state.registers[destReg] = evaluateBinary('+', currentVal, { type: 'immediate', value: 1 });
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.OF = 'overflow';
                 }
             }
-        } else if (instr.startsWith('and')) {
-            // and src, dest - dest = dest & src
+        } else if (instr.match(/^(dec)[bwlq]?$/)) {
+            if (operands.length === 1) {
+                const destReg = normalizeRegister(operands[0]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate') {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
+                    const signBit = 1 << (bits - 1);
+
+                    const result = currentVal.value - 1;
+                    const maskedResult = result & maxVal;
+
+                    state.registers[destReg] = { type: 'immediate', value: maskedResult };
+
+                    state.flags.ZF = maskedResult === 0 ? '1' : '0';
+                    state.flags.SF = (maskedResult & signBit) ? '1' : '0';
+                    state.flags.OF = currentVal.value === signBit ? '1' : '0';
+                    state.flags.AF = (currentVal.value & 0xF) === 0 ? '1' : '0';
+                } else {
+                    state.registers[destReg] = evaluateBinary('-', currentVal, { type: 'immediate', value: 1 });
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.OF = 'overflow';
+                }
+            }
+        } else if (instr.match(/^(neg)[bwlq]?$/)) {
+            if (operands.length === 1) {
+                const destReg = normalizeRegister(operands[0]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                if (currentVal.type === 'immediate') {
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
+                    const signBit = 1 << (bits - 1);
+
+                    const result = (-currentVal.value) & maxVal;
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = (result & signBit) ? '1' : '0';
+                    state.flags.CF = currentVal.value !== 0 ? '1' : '0';
+                    state.flags.OF = currentVal.value === signBit ? '1' : '0';
+                } else {
+                    state.registers[destReg] = { type: 'symbolic', expr: `-${formatValue(currentVal)}` };
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = 'operand != 0';
+                    state.flags.OF = 'overflow';
+                }
+            }
+        } else if (instr.match(/^(and)[bwlq]?$/)) {
             if (operands.length === 2) {
                 const src = parseOperand(operands[0]);
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
-                state.registers[destReg] = evaluateBinary('&', currentVal, src);
+                if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const result = currentVal.value & src.value;
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const signBit = 1 << (bits - 1);
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = (result & signBit) ? '1' : '0';
+                    // Always cleard
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+
+                    const lowByte = result & 0xFF;
+                    let count = 0;
+                    for (let i = 0; i < 8; i++) {
+                        if (lowByte & (1 << i)) count++;
+                    }
+                    state.flags.PF = (count % 2 === 0) ? '1' : '0';
+                } else {
+                    state.registers[destReg] = evaluateBinary('&', currentVal, src);
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+                }
             }
-        } else if (instr.startsWith('or')) {
+        } else if (instr.match(/^(or)[bwlq]?$/)) {
             // or src, dest - dest = dest | src
             if (operands.length === 2) {
                 const src = parseOperand(operands[0]);
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
-                state.registers[destReg] = evaluateBinary('|', currentVal, src);
+
+                if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const result = currentVal.value | src.value;
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const signBit = 1 << (bits - 1);
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = (result & signBit) ? '1' : '0';
+                    // Always cleared
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+
+                    const lowByte = result & 0xFF;
+                    let count = 0;
+                    for (let i = 0; i < 8; i++) {
+                        if (lowByte & (1 << i)) count++;
+                    }
+                    state.flags.PF = (count % 2 === 0) ? '1' : '0';
+                } else {
+                    state.registers[destReg] = evaluateBinary('|', currentVal, src);
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+                }
             }
         } else if (instr.startsWith('xor')) {
-            // xor src, dest - dest = dest ^ src
-            // Special case: xor reg, reg = 0
             if (operands.length === 2) {
                 const src = parseOperand(operands[0]);
                 const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
                 if (src.type === 'register' && src.reg === destReg) {
                     state.registers[destReg] = { type: 'immediate', value: 0 };
+
+                    state.flags.ZF = '1';
+                    state.flags.SF = '0';
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+                    state.flags.PF = '1';
+                } else if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const result = currentVal.value ^ src.value;
+                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const signBit = 1 << (bits - 1);
+                    const mask = bits === 64 ? -1 : (1 << bits) - 1;
+                    const maskedResult = result & mask;
+
+                    state.registers[destReg] = { type: 'immediate', value: maskedResult };
+
+                    state.flags.ZF = maskedResult === 0 ? '1' : '0';
+                    state.flags.SF = (maskedResult & signBit) ? '1' : '0';
+                    // Always cleared
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+
+                    const lowByte = maskedResult & 0xFF;
+                    let count = 0;
+                    for (let i = 0; i < 8; i++) {
+                        if (lowByte & (1 << i)) count++;
+                    }
+                    state.flags.PF = (count % 2 === 0) ? '1' : '0';
                 } else {
-                    const currentVal = state.registers[destReg] || { type: 'unknown' };
                     state.registers[destReg] = evaluateBinary('^', currentVal, src);
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
                 }
             }
         } else if (instr.startsWith('shl') || instr.startsWith('sal')) {
             // shl src, dest - dest = dest << src
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const count = parseOperand(operands[0]);
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
-                state.registers[destReg] = evaluateBinary('<<', currentVal, src);
+
+                if (currentVal.type === 'immediate' && count.type === 'immediate') {
+                    const bits = 64;
+                    const shiftCount = count.value & (bits - 1);
+                    const result = (currentVal.value << shiftCount) >>> 0;
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = result < 0 ? '1' : '0';
+                    state.flags.CF = shiftCount > 0 ? ((currentVal.value >> (bits - shiftCount)) & 1).toString() ? '1' : '0' : 'unchanged';
+                } else {
+                    state.registers[destReg] = evaluateBinary('<<', currentVal, count);
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = 'last_bit_shifted';
+                }
             }
-        } else if (instr.startsWith('shr') || instr.startsWith('sar')) {
+        } else if (instr.startsWith('shr')) {
             // shr src, dest - dest = dest >> src
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const count = parseOperand(operands[0]);
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
-                state.registers[destReg] = evaluateBinary('>>', currentVal, src);
+
+                if (currentVal.type === 'immediate' && count.type === 'immediate') {
+                    const bits = 64;
+                    const shiftCount = count.value & (bits - 1);
+                    const result = (currentVal.value >>> shiftCount);
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = '0'; // Always 0 for logical shift
+                    state.flags.CF = shiftCount > 0 ? ((currentVal.value >> (shiftCount - 1)) & 1) ? '1' : '0' : 'unchanged';
+                } else {
+                    state.registers[destReg] = evaluateBinary('>>', currentVal, count);
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = 'last_bit_shifted';
+                }
+            }
+        } else if (instr.startsWith('sar')) {
+            if (operands.length === 2) {
+                const count = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate' && count.type === 'immediate') {
+                    const bits = 64;
+                    const shiftCount = count.value & (bits - 1);
+                    // Arithmetic shift preserves sign bit
+                    const result = currentVal.value >> shiftCount;
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = result < 0 ? '1' : '0';
+                    state.flags.CF = shiftCount > 0 ? ((currentVal.value >> (shiftCount - 1)) & 1) ? '1' : '0' : 'unchanged';
+                } else {
+                    state.registers[destReg] = evaluateBinary('>>', currentVal, count);
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = 'last_bit_shifted';
+                }
             }
         } else if (instr === 'call' || instr === 'callq') {
             // Function calls clobber volatile registers (System V AMD64 ABI)
@@ -1905,7 +2415,7 @@ function analyzeRegisters(document: vscode.TextDocument, targetLine: number): ty
             });
             // Clear flags after function call
             state.flags = {};
-        } else if (instr.startsWith('j') || instr === 'loop' || instr === 'loope' || instr === 'loopne') {
+        } else if (instr.startsWith('j')) {
             // Branches/loops - mark registers as unknown after branch
             // (We can't follow control flow, so be conservative)
             for (const reg in state.registers) {
@@ -1913,7 +2423,1217 @@ function analyzeRegisters(document: vscode.TextDocument, targetLine: number): ty
             }
             // Clear flags
             state.flags = {};
-        } else {
+        } else if (instr.match(/^cmov(e|ne|g|ge|l|le|a|ae|b|be|c|nc|o|no|s|ns|p|np|pe|po|z|nz)(q|l|w)?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                const match = instr.match(/^cmov([a-z]+)/);
+                const condition = match ? match[1] : 'unknown';
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `cmov_${condition}(${formatValue(src)}, ${formatValue(currentVal)})`
+                };
+            }
+        } else if (instr.match(/^set(e|ne|g|ge|l|le|a|ae|b|be|c|nc|o|no|s|ns|p|np|pe|po|z|nz)$/)) {
+            if (operands.length === 1 && operands[0].startsWith('%')) {
+                const destReg = normalizeRegister(operands[0]);
+                const match = instr.match(/^set([a-z]+)/);
+                const condition = match ? match[1] : 'unknown';
+
+                const condMap: { [key: string]: string } = {
+                    'e': 'ZF',
+                    'z': 'ZF',
+                    'ne': '!ZF',
+                    'nz': '!ZF',
+                    'g': '!ZF && SF==OF',
+                    'ge': 'SF==OF',
+                    'l': 'SF!=OF',
+                    'le': 'ZF || SF!=OF',
+                    'a': '!CF && !ZF',
+                    'ae': '!CF',
+                    'b': 'CF',
+                    'be': 'CF || ZF',
+                    'c': 'CF',
+                    'nc': '!CF',
+                    'o': 'OF',
+                    'no': '!OF',
+                    's': 'SF',
+                    'ns': '!SF',
+                    'p': 'PF',
+                    'pe': 'PF',
+                    'np': '!PF',
+                    'po': '!PF'
+                };
+
+                const flagExpr = condMap[condition] || condition;
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `(${flagExpr}) ? 1 : 0`
+                };
+            }
+        } else if (instr.match(/^(rol|ror)[bwlq]?$/)) {
+            if (operands.length === 2) {
+                const count = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate' && count.type === 'immediate') {
+                    const bits = 64;
+                    const mask = count.value % bits;
+
+                    if (instr.startsWith('rol')) {
+                        const result = ((currentVal.value << mask) | (currentVal.value >>> (bits - mask))) >>> 0;
+                        state.registers[destReg] = { type: 'immediate', value: result };
+                    } else {
+                        const result = ((currentVal.value >>> mask) | (currentVal.value << (bits - mask))) >>> 0;
+                        state.registers[destReg] = { type: 'immediate', value: result };
+                    }
+                } else {
+                    const operation = instr.startsWith('rol') ? 'rotate_left' : 'rotate_right';
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `${operation}(${formatValue(currentVal)}, ${formatValue(count)})`
+                    };
+                }
+
+                state.flags.CF = 'last_bit_shifted';
+                if (count.type === 'immediate' && count.value === 1) {
+                    state.flags.OF = 'msb_changed';
+                }
+            }
+        } else if (instr.match(/^(rcl|rcr)[bwlq]?$/)) {
+            // RCL/RCR include carry flag, can't compute without knowing CF
+            if (operands.length === 2) {
+                const count = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                const operation = instr.startsWith('rcl') ? 'rotate_carry_left' : 'rotate_carry_right';
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${operation}(${formatValue(currentVal)}, ${formatValue(count)}, CF)`
+                };
+
+                state.flags.CF = 'last_bit_shifted';
+            }
+        } else if (instr.match(/^(bsf|bsr)[wlq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate' && src.value !== 0) {
+                    let result = 0;
+                    if (instr.startsWith('bsf')) {
+                        for (let i = 0; i < 64; i++) {
+                            if (src.value & (1 << i)) {
+                                result = i;
+                                break;
+                            }
+                        }
+                    } else {
+                        for (let i = 63; i >= 0; i--) {
+                            if (src.value & (1 << i)) {
+                                result = i;
+                                break;
+                            }
+                        }
+                    }
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                    state.flags.ZF = '0';
+                } else {
+                    const operation = instr.startsWith('bsf') ? 'bit_scan_forward' : 'bit_scan_reverse';
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `${operation}(${formatValue(src)})`
+                    };
+                    state.flags.ZF = `${formatValue(src)} == 0`;
+                }
+            }
+        } else if (instr.match(/^(popcnt)[wlq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate') {
+                    let count = 0;
+                    let value = src.value;
+                    while (value) {
+                        count += value & 1;
+                        value >>>= 1;
+                    }
+                    state.registers[destReg] = { type: 'immediate', value: count };
+                    state.flags.ZF = count === 0 ? '1' : '0';
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `population_count(${formatValue(src)})`
+                    };
+                    state.flags.ZF = `${formatValue(src)} == 0`;
+
+                }
+            }
+        } else if (instr.match(/^(lzcnt)[wlq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate') {
+                    let count = 0;
+                    const bits = 64;
+                    for (let i = bits - 1; i >= 0; i--) {
+                        if (src.value & (1 << i)) break;
+                        count++;
+                    }
+                    state.registers[destReg] = { type: 'immediate', value: count };
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `leading_zero_count(${formatValue(src)})`
+                    };
+                }
+            }
+        } else if (instr.match(/^tzcnt[wlq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate') {
+                    if (src.value === 0) {
+                        state.registers[destReg] = { type: 'immediate', value: 64 };
+                    } else {
+                        let count = 0;
+                        let value = src.value;
+                        while ((value & 1) === 0) {
+                            count++;
+                            value >>>= 1;
+                        }
+                        state.registers[destReg] = { type: 'immediate', value: count };
+                    }
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `trailing_zero_count(${formatValue(src)})`
+                    }
+                }
+            }
+        } else if (instr.match(/^(blsi)[lq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate') {
+                    const result = src.value & -(src.value);
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `isolate_lowest_set_bit(${formatValue(src)})`
+                    };
+                    state.flags.ZF = `result == 0`;
+                }
+                state.flags.SF = 'result < 0';
+                state.flags.CF = '0';
+            }
+        } else if (instr.match(/^blsmsk[lq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate') {
+                    const result = src.value ^ (src.value - 1);
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                    state.flags.ZF = '0';
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `mask_to_lowest_set_bit(${formatValue(src)})`
+                    };
+                    state.flags.ZF = '0';
+                }
+                state.flags.SF = 'result < 0';
+                state.flags.CF = src.type === 'immediate' && src.value === 0 ? '1' : 'src == 0';
+            }
+        } else if (instr.match(/^blsr[lq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate') {
+                    const result = src.value & (src.value - 1);
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `reset_lowest_set_bit(${formatValue(src)})`
+                    };
+                    state.flags.ZF = `result == 0`
+                }
+                state.flags.SF = 'result < 0';
+                state.flags.CF = src.type === 'immediate' && src.value === 0 ? '1' : 'src == 0';
+            }
+        } else if (instr.match(/^andn[lq]?$/)) {
+            if (operands.length === 3) {
+                const src1 = parseOperand(operands[0]);
+                const src2 = parseOperand(operands[1]);
+                const destReg = normalizeRegister(operands[2]);
+
+                if (src1.type === 'immediate' && src2.type === 'immediate') {
+                    const result = (~src1.value) & src2.value;
+                    state.registers[destReg] = { type: 'immediate', value: result >>> 0 };
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = result < 0 ? '1' : '0';
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `~${formatValue(src1)} & ${formatValue(src2)}`
+                    };
+                    state.flags.ZF = `result == 0`;
+                    state.flags.SF = `result < 0`;
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+                }
+            }
+        } else if (instr.match(/^bextr[lq]?$/)) {
+            if (operands.length === 3) {
+                const src = parseOperand(operands[0]);
+                const control = parseOperand(operands[1]);
+                const destReg = normalizeRegister(operands[2]);
+
+                if (src.type === 'immediate' && control.type === 'immediate') {
+                    // Control bits[7:0] = start, bits[15:8] = length
+                    const start = control.value & 0xFF;
+                    const length = (control.value >> 8) & 0xFF;
+
+                    if (length === 0) {
+                        state.registers[destReg] = { type: 'immediate', value: 0 };
+                    } else {
+                        const mask = (1 << length) - 1;
+                        const result = (src.value >> start) & mask;
+                        state.registers[destReg] = { type: 'immediate', value: result };
+                    }
+                    state.flags.CF = '0';
+                    state.flags.OF = '0';
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `bit_extract(${formatValue(src)}, ${formatValue(control)})`
+                    };
+                    state.flags.ZF = `result == 0`;
+                }
+            }
+        } else if (instr.match(/^bzhi[lq]?$/)) {
+            if (operands.length === 3) {
+                const src = parseOperand(operands[0]);
+                const index = parseOperand(operands[1]);
+                const destReg = normalizeRegister(operands[2]);
+
+                if (src.type === 'immediate' && index.type === 'immediate') {
+                    const bits = 64;
+                    const indexVal = index.value & 0xFF;
+
+                    if (indexVal >= bits) {
+                        state.registers[destReg] = { type: 'immediate', value: src.value };
+                    } else {
+                        const mask = (1 << indexVal) - 1;
+                        const result = src.value & mask;
+                        state.registers[destReg] = { type: 'immediate', value: result };
+                    }
+                    state.flags.CF = index.value >= bits || (src.value >> indexVal) !== 0 ? '1' : '0';
+                    state.flags.SF = '0';
+                    state.flags.OF = '0';
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `zero_high_bits(${formatValue(src)}, ${formatValue(index)})`
+                    };
+                    state.flags.ZF = `result == 0`;
+                }
+            }
+        } else if (instr.match(/^pdep[lq]?$/)) {
+            if (operands.length === 3) {
+                const src = parseOperand(operands[0]);
+                const mask = parseOperand(operands[1]);
+                const destReg = normalizeRegister(operands[2]);
+
+                if (src.type === 'immediate' && mask.type === 'immediate') {
+                    // Parallel deposit - scatter bits according to mask
+                    let result = 0;
+                    let srcBit = 0;
+
+                    for (let i = 0; i < 64; i++) {
+                        if (mask.value & (1 << i)) {
+                            if (src.value & (1 << srcBit)) {
+                                result |= (1 << i);
+                            }
+                            srcBit++;
+                        }
+                    }
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `parallel_deposit(${formatValue(src)}, ${formatValue(mask)})`
+                    };
+                }
+            }
+        } else if (instr.match(/^pext[lq]?$/)) {
+            if (operands.length === 3) {
+                const src = parseOperand(operands[0]);
+                const mask = parseOperand(operands[1]);
+                const destReg = normalizeRegister(operands[2]);
+
+                if (src.type === 'immediate' && mask.type === 'immediate') {
+                    let result = 0;
+                    let destBit = 0;
+
+                    for (let i = 0; i < 64; i++) {
+                        if (mask.value & (1 << i)) {
+                            if (src.value & (1 << i)) {
+                                result |= (1 << destBit);
+                            }
+                            destBit++;
+                        }
+                    }
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `parallel_extract(${formatValue(src)}, ${formatValue(mask)})`
+                    };
+                }
+            }
+        } else if (instr.match(/^(bt|bts|btr|btc)[wlq]?$/)) {
+            if (operands.length === 2) {
+                const bit = parseOperand(operands[0]);
+                const destOperand = operands[1];
+
+                if (destOperand.startsWith('%')) {
+                    const destReg = normalizeRegister(destOperand);
+                    const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                    if (currentVal.type === 'immediate' && bit.type === 'immediate') {
+                        const bitPos = bit.value & 63;
+                        const bitMask = 1 << bitPos;
+
+                        state.flags.CF = (currentVal.value & bitMask) !== 0 ? '1' : '0';
+
+                        if (instr === 'bts') {
+                            state.registers[destReg] = { type: 'immediate', value: currentVal.value | bitMask };
+                        } else if (instr === 'btr') {
+                            state.registers[destReg] = { type: 'immediate', value: currentVal.value & ~bitMask };
+                        } else if (instr === 'btc') {
+                            state.registers[destReg] = { type: 'immediate', value: currentVal.value ^ bitMask };
+                        } else {
+                            // bt no mod reg
+                        }
+                    } else {
+                        state.flags.CF = `bit_${formatValue(bit)}_of_${formatValue(currentVal)}`;
+
+                        if (instr.startsWith('bts') || instr.startsWith('btr') || instr.startsWith('btc')) {
+                            const operation = instr.startsWith('bts') ? 'set_bit' : instr.startsWith('btr') ? 'reset_bit' : 'complement_bit';
+                            state.registers[destReg] = {
+                                type: 'symbolic',
+                                expr: `${operation}(${formatValue(currentVal)}, ${formatValue(bit)})`
+                            };
+                        }
+                    }
+                }
+            }
+        } else if (instr.match(/^movs(b|w)l$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate') {
+                    const srcSize = instr.includes('b') ? 8 : 16;
+                    const signBit = 1 << (srcSize - 1);
+                    const mask = (1 << srcSize) - 1;
+                    let value = src.value & mask;
+
+                    // Sign extend to 32 bits
+                    if (value & signBit) {
+                        value = value | (~mask & 0xFFFFFFFF);
+                    }
+
+                    state.registers[destReg] = { type: 'immediate', value: value | 0 };
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `sign_extend_to_32(${formatValue(src)})`
+                    };
+                }
+            }
+        } else if (instr.match(/^movz(b|w)l$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+
+                if (src.type === 'immediate') {
+                    const srcSize = instr.includes('b') ? 8 : 16;
+                    const mask = (1 << srcSize) - 1;
+                    state.registers[destReg] = { type: 'immediate', value: src.value & mask };
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `zero_extend_to_32(${formatValue(src)})`
+                    };
+                }
+            }
+        } else if (instr.match(/^xchg[bwlq]?$/)) {
+            if (operands.length === 2) {
+                const op1 = operands[0];
+                const op2 = operands[1];
+
+                if (op1.startsWith('%') && op2.startsWith('%')) {
+                    const reg1 = normalizeRegister(op1);
+                    const reg2 = normalizeRegister(op2);
+
+                    const temp = state.registers[reg1];
+                    state.registers[reg1] = state.registers[reg2] || { type: 'unknown' };
+                    state.registers[reg2] = temp || { type: 'unknown' };
+                }
+            }
+        } else if (instr.match(/^(shld|shrd)[wlq]?$/)) {
+            if (operands.length === 3) {
+                const count = parseOperand(operands[0]);
+                const src = parseOperand(operands[1]);
+                const destReg = normalizeRegister(operands[2]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate' && src.type === 'immediate' && count.type === 'immediate') {
+                    const bits = 64;
+                    const shiftCount = count.value & (bits - 1);
+
+                    if (instr.startsWith('shld')) {
+                        const result = ((currentVal.value << shiftCount) | (src.value >>> (bits - shiftCount))) >>> 0;
+                        state.registers[destReg] = { type: 'immediate', value: result };
+                    } else {
+                        const result = ((currentVal.value >>> shiftCount) | (src.value << (bits - shiftCount))) >>> 0;
+                        state.registers[destReg] = { type: 'immediate', value: result };
+                    }
+
+                    state.flags.CF = 'last_bit_shifted';
+                    if (shiftCount === 1) {
+                        state.flags.OF = 'msb_changed';
+                    }
+                } else {
+                    const operation = instr.startsWith('shld') ? 'shift_left_double' : 'shift_right_double';
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `${operation}(${formatValue(currentVal)}, ${formatValue(src)}, ${formatValue(count)})`
+                    };
+                    state.flags.CF = 'last_bit_shifted';
+                }
+                state.flags.ZF = 'result == 0';
+                state.flags.SF = 'result < 0';
+            }
+        } else if (instr.match(/^(daa|das|aaa|aas|aam|aad)$/)) {
+            const raxVal = state.registers['%rax'] || { type: 'unknown' };
+
+            if (instr === 'daa') {
+                // Decimal adjust after addition
+                state.registers['%rax'] = { type: 'symbolic', expr: 'decimal_adjust_add(AL)' };
+                state.flags.CF = 'carry';
+                state.flags.AF = 'aux_carry';
+                state.flags.ZF = 'AL == 0';
+                state.flags.SF = 'AL < 0';
+            } else if (instr === 'das') {
+                // Decimal adjust after subtraction
+                state.registers['%rax'] = { type: 'symbolic', expr: 'decimal_adjust_sub(AL)' };
+                state.flags.CF = 'borrow';
+                state.flags.AF = 'aux_borrow';
+                state.flags.ZF = 'AL == 0';
+                state.flags.SF = 'AL < 0';
+            } else if (instr === 'aaa') {
+                // ASCII adjust after addition
+                state.registers['%rax'] = { type: 'symbolic', expr: 'ascii_adjust_add(AX)' };
+                state.flags.CF = 'carry';
+                state.flags.AF = 'carry';
+            } else if (instr === 'aas') {
+                // ASCII adjust after subtraction
+                state.registers['%rax'] = { type: 'symbolic', expr: 'ascii_adjust_sub(AX)' };
+                state.flags.CF = 'borrow';
+                state.flags.AF = 'borrow';
+            } else if (instr === 'aam') {
+                // ASCII adjust after multiplication
+                if (operands.length === 0 || (operands.length === 1 && operands[0] === '$10')) {
+                    if (raxVal.type === 'immediate') {
+                        const al = raxVal.value & 0xFF;
+                        const ah = Math.floor(al / 10);
+                        const newAl = al % 10;
+                        state.registers['%rax'] = { type: 'immediate', value: (raxVal.value & 0xFFFFFF00) | (ah << 8) | newAl };
+                    } else {
+                        state.registers['%rax'] = { type: 'symbolic', expr: 'ascii_adjust_mul(AL)' };
+                    }
+                } else {
+                    state.registers['%rax'] = { type: 'symbolic', expr: 'ascii_adjust_mul(AL)' };
+                }
+                state.flags.ZF = 'AL == 0';
+                state.flags.SF = 'AL < 0';
+            } else if (instr === 'aad') {
+                if (operands.length === 0 || (operands.length === 1 && operands[0] === '$10')) {
+                    if (raxVal.type === 'immediate') {
+                        const al = raxVal.value & 0xFF;
+                        const ah = (raxVal.value >> 8) & 0xFF;
+                        const newAl = (al + ah * 10) & 0xFF;
+                        state.registers['%rax'] = { type: 'immediate', value: (raxVal.value & 0xFFFF0000) | newAl };
+                    } else {
+                        state.registers['%rax'] = { type: 'symbolic', expr: 'ascii_adjust_div(AX)' };
+                    }
+                } else {
+                    state.registers['%rax'] = { type: 'symbolic', expr: 'ascii_adjust_div(AX)' };
+                }
+
+                state.flags.ZF = 'AL == 0';
+                state.flags.SF = 'AL < 0';
+            }
+        } else if (instr.match(/^bswap[lq]?$/)) {
+            if (operands.length === 1) {
+                const destReg = normalizeRegister(operands[0]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate') {
+                    let value = currentVal.value;
+                    let result = 0;
+
+                    const size = instr.endsWith('l') ? 32 : 64;
+                    const bytes = size / 8;
+
+                    for (let i = 0; i < bytes; i++) {
+                        const byte = (value >> (i * 8)) & 0xFF;
+                        result |= byte << ((bytes - 1 - i) * 8);
+                    }
+
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `bswap(${formatValue(currentVal)})`
+                    };
+                }
+            }
+        } else if (instr.match(/^(lodsb|lodsw|lodsd|lodsq)$/)) {
+            const size = instr.endsWith('b') ? 1 : instr.endsWith('w') ? 2 : instr.endsWith('d') ? 4 : 8;
+
+            state.registers['%rax'] = { type: 'symbolic', expr: `*%rsi` };
+
+            const rsiVal = state.registers['%rsi'] || { type: 'symbolic', expr: '%rsi' };
+            if (rsiVal.type === 'immediate') {
+                state.registers['%rsi'] = { type: 'immediate', value: rsiVal.value + size };
+            } else {
+                state.registers['%rsi'] = evaluateBinary('+', rsiVal, { type: 'immediate', value: size });
+            }
+        } else if (instr.match(/^(stosb|stosw|stosd|stosq)$/)) {
+            const size = instr.endsWith('b') ? 1 : instr.endsWith('w') ? 2 : instr.endsWith('d') ? 4 : 8;
+
+            const rdiVal = state.registers['%rdi'] || { type: 'symbolic', expr: '%rdi' };
+            if (rdiVal.type === 'immediate') {
+                state.registers['%rdi'] = { type: 'immediate', value: rdiVal.value + size };
+            } else {
+                state.registers['%rdi'] = evaluateBinary('+', rdiVal, { type: 'immediate', value: size });
+            }
+        } else if (instr.match(/^(movsb|movsw|movsd|movsq)$/)) {
+            const size = instr.match('b') ? 1 : instr.match('w') ? 2 : instr.match('d') ? 4 : 8;
+
+            const rsiVal = state.registers['%rsi'] || { type: 'symbolic', expr: '%rsi' };
+            const rdiVal = state.registers['%rdi'] || { type: 'symbolic', expr: '%rdi' };
+
+            if (rsiVal.type === 'immediate') {
+                state.registers['%rsi'] = { type: 'immediate', value: rsiVal.value + size };
+            } else {
+                state.registers['%rsi'] = evaluateBinary('+', rsiVal, { type: 'immediate', value: size });
+            }
+
+            if (rdiVal.type === 'immediate') {
+                state.registers['%rdi'] = { type: 'immediate', value: rdiVal.value + size };
+            } else {
+                state.registers['%rdi'] = evaluateBinary('+', rdiVal, { type: 'immediate', value: size });
+            }
+        } else if (instr.match(/^(cmpsb|cmpsw|cmpsd|cmpsq)$/)) {
+            const size = instr.endsWith('b') ? 1 : instr.endsWith('w') ? 2 : instr.endsWith('d') ? 4 : 8;
+
+            state.flags.ZF = '*%rsi == *%rdi';
+            state.flags.CF = '*%rsi < *%rdi';
+            state.flags.SF = '(*%rsi - *%rdi) < 0';
+
+            const rsiVal = state.registers['%rsi'] || { type: 'symbolic', expr: '%rsi' };
+            const rdiVal = state.registers['%rdi'] || { type: 'symbolic', expr: '%rdi' };
+
+            if (rsiVal.type === 'immediate') {
+                state.registers['%rsi'] = { type: 'immediate', value: rsiVal.value + size };
+            } else {
+                state.registers['%rsi'] = evaluateBinary('+', rsiVal, { type: 'immediate', value: size });
+            }
+
+            if (rdiVal.type === 'immediate') {
+                state.registers['%rdi'] = { type: 'immediate', value: rdiVal.value + size };
+            } else {
+                state.registers['%rdi'] = evaluateBinary('+', rdiVal, { type: 'immediate', value: size });
+            }
+        } else if (instr.match(/^(scasb|scasw|scasd|scasq)$/)) {
+            const size = instr.endsWith('b') ? 1 : instr.endsWith('w') ? 2 : instr.endsWith('d') ? 4 : 8;
+
+            state.flags.ZF = '%rax == *%rdi';
+            state.flags.CF = '%rax < *%rdi';
+            state.flags.SF = '(%rax - *%rdi) < 0';
+
+            const rdiVal = state.registers['%rdi'] || { type: 'symbolic', expr: '%rdi' };
+            if (rdiVal.type === 'immediate') {
+                state.registers['%rdi'] = { type: 'immediate', value: rdiVal.value + size };
+            } else {
+                state.registers['%rdi'] = evaluateBinary('+', rdiVal, { type: 'immediate', value: size });
+            }
+        } else if (instr.match(/^(loop|loope|loopz|loopne|loopnz)$/)) {
+            const rcxVal = state.registers['%rcx'] || { type: 'unknown' };
+
+            if (rcxVal.type === 'immediate') {
+                state.registers['%rcx'] = { type: 'immediate', value: rcxVal.value - 1 };
+            } else {
+                state.registers['%rcx'] = evaluateBinary('-', rcxVal, { type: 'immediate', value: 1 });
+            }
+
+            // Might be unknown afterwards
+        } else if (instr.match(/^(shufps|shufpd|pshufd|pshufb)$/)) {
+            if (operands.length >= 2) {
+                const destReg = operands[operands.length - 1];
+                const immediatePattern = operands.length === 3 ? operands[0] : null;
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}_shuffle(${immediatePattern ? formatValue(parseOperand(immediatePattern)) : '...'})`
+                };
+            }
+        } else if (instr.match(/^v(shufps|shufpd|pshufd|pshufb)$/)) {
+            if (operands.length >= 3) {
+                const destReg = operands[operands.length - 1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}_vec_shuffle(...)`
+                };
+            }
+        } else if (instr.match(/^(pack|unpack)(ss|us|wd|dq)(wb|wd|dq)?$/)) {
+            if (operands.length === 2) {
+                const destReg = operands[1];
+                const src = parseOperand(operands[0]);
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^(cmp|ucomis|comis)(ss|sd|ps|pd)?$/)) {
+            if (operands.length === 2) {
+                const src1 = parseOperand(operands[0]);
+                const src2 = parseOperand(operands[1]);
+
+                state.flags.ZF = `${formatValue(src1)} == ${formatValue(src2)}`;
+                state.flags.CF = `${formatValue(src1)} < ${formatValue(src2)}`;
+                state.flags.PF = `${formatValue(src1)} or ${formatValue(src2)} is NaN`;
+            }
+        } else if (instr.match(/^v(cmp|ucomis|comis)(ss|sd|ps|pd)$/)) {
+            if (operands.length >= 2) {
+                const src1 = parseOperand(operands[0]);
+                const src2 = parseOperand(operands[1]);
+
+                state.flags.ZF = `${formatValue(src1)} == ${formatValue(src2)}`;
+                state.flags.CF = `${formatValue(src1)} < ${formatValue(src2)}`;
+                state.flags.PF = `unordered`;
+            }
+        } else if (instr.match(/^(pcmpeq|pcmpgt)(b|w|d|q)$/)) {
+            // SSE integer comparison - sets all bits to 1 if true, 0 if false
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                const comparison = instr.includes('eq') ? '==' : '>';
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${formatValue(currentVal)} ${comparison} ${formatValue(src)} ? 0xFF... : 0x00...`
+                };
+            }
+        } else if (instr.match(/^vpcmp(eq|gt)(b|w|d|q)$/)) {
+            // AVX version
+            if (operands.length === 3) {
+                const src1 = parseOperand(operands[0]);
+                const src2 = parseOperand(operands[1]);
+                const destReg = operands[2];
+
+                const comparison = instr.includes('eq') ? '==' : '>';
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${formatValue(src1)} ${comparison} ${formatValue(src2)} ? 0xFF... : 0x00...`
+                };
+            }
+        } else if (instr.match(/^(min|max)(ps|pd|ss|sd)$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                const operation = instr.startsWith('min') ? 'min' : 'max';
+
+                if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const result = operation === 'min' ?
+                        Math.min(currentVal.value, src.value) :
+                        Math.max(currentVal.value, src.value);
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `${operation}(${formatValue(currentVal)}, ${formatValue(src)})`
+                    }
+                };
+            }
+        } else if (instr.match(/^v(min|max)(ps|pd|ss|sd)$/)) {
+            if (operands.length === 3) {
+                const src1 = parseOperand(operands[0]);
+                const src2 = parseOperand(operands[1]);
+                const destReg = operands[2];
+
+                const operation = instr.includes('min') ? 'min' : 'max';
+
+                if (src1.type === 'immediate' && src2.type === 'immediate') {
+                    const result = operation === 'min' ?
+                        Math.min(src1.value, src2.value) :
+                        Math.max(src1.value, src2.value);
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `${operation}(${formatValue(src1)}, ${formatValue(src2)})`
+                    };
+                }
+            }
+        } else if (instr.match(/^p(min|max)(ub|uw|ud|sb|sw|sd)$/)) {
+            // SSE integer min/max
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                const operation = instr.includes('min') ? 'min' : 'max';
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${operation}(${formatValue(currentVal)}, ${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^(sqrt|rsqrt|rcp)(ps|pd|ss|sd)$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+
+                const operation = instr.startsWith('sqrt') ? 'sqrt' :
+                    instr.startsWith('rsqrt') ? 'rsqrt' : 'rcp';
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${operation}(${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^v(sqrt|rsqrt|rcp)(ps|pd|ss|sd)$/)) {
+            if (operands.length >= 2) {
+                const src = parseOperand(operands[operands.length - 2]);
+                const destReg = operands[operands.length - 1];
+
+                const operation = instr.includes('sqrt') ? 'sqrt' :
+                    instr.includes('rsqrt') ? 'rsqrt' : 'rcp';
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${operation}(${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^(extract|insert)ps$/)) {
+            if (operands.length === 3) {
+                const imm = parseOperand(operands[0]);
+                const src = parseOperand(operands[1]);
+                const dest = operands[2];
+
+                if (instr.startsWith('extract')) {
+                    // Extract single precision float
+                    state.registers[dest] = {
+                        type: 'symbolic',
+                        expr: `extract_element(${formatValue(src)}, ${formatValue(imm)})`
+                    };
+                } else {
+                    // Insert single precision float
+                    const destReg = dest.startsWith('%') ? dest : operands[2];
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `insert_element(dest, ${formatValue(src)}, ${formatValue(imm)})`
+                    };
+                }
+            }
+        } else if (instr.match(/^(pextr|pinsr)(b|w|d|q)$/)) {
+            if (operands.length === 3) {
+                const imm = parseOperand(operands[0]);
+                const src = parseOperand(operands[1]);
+                const dest = operands[2];
+
+                if (instr.startsWith('pextr')) {
+                    // Extract integer element
+                    if (dest.startsWith('%')) {
+                        const destReg = normalizeRegister(dest);
+                        state.registers[destReg] = {
+                            type: 'symbolic',
+                            expr: `extract_element(${formatValue(src)}, ${formatValue(imm)})`
+                        };
+                    }
+                } else {
+                    // Insert integer element
+                    if (dest.startsWith('%')) {
+                        state.registers[dest] = {
+                            type: 'symbolic',
+                            expr: `insert_element(dest, ${formatValue(src)}, ${formatValue(imm)})`
+                        };
+                    }
+                }
+            }
+        } else if (instr.match(/^v(extract|insert)(f128|i128)$/)) {
+            if (operands.length === 3 || operands.length === 4) {
+                const destReg = operands[operands.length - 1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(...)`
+                };
+            }
+        } else if (instr.match(/^(blend|pblend)(ps|pd|w|vb)$/)) {
+            if (operands.length === 3) {
+                const mask = parseOperand(operands[0]);
+                const src = parseOperand(operands[1]);
+                const destReg = operands[2];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `blend(${formatValue(src)}, dest, ${formatValue(mask)})`
+                };
+            }
+        } else if (instr.match(/^v(blend|pblend)(ps|pd|w|vb)$/)) {
+            if (operands.length === 4) {
+                const mask = parseOperand(operands[0]);
+                const src1 = parseOperand(operands[1]);
+                const src2 = parseOperand(operands[2]);
+                const destReg = operands[3];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `blend(${formatValue(src1)}, ${formatValue(src2)}, ${formatValue(mask)})`
+                };
+            }
+        } else if (instr.match(/^(hadd|hsub)(ps|pd)$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+
+                const operation = instr.startsWith('hadd') ? 'horizontal_add' : 'horizontal_sub';
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${operation}(dest, ${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^v(hadd|hsub)(ps|pd)$/)) {
+            if (operands.length === 3) {
+                const src1 = parseOperand(operands[0]);
+                const src2 = parseOperand(operands[1]);
+                const destReg = operands[2];
+
+                const operation = instr.includes('hadd') ? 'horizontal_add' : 'horizontal_sub';
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${operation}(${formatValue(src1)}, ${formatValue(src2)})`
+                };
+            }
+        } else if (instr.match(/^p(hadd|hsub|haddsw|hsubsw)(w|d)$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(dest, ${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^dp(ps|pd)$/)) {
+            if (operands.length === 3) {
+                const imm = parseOperand(operands[0]);
+                const src = parseOperand(operands[1]);
+                const destReg = operands[2];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `dot_product(dest, ${formatValue(src)}, ${formatValue(imm)})`
+                };
+            }
+        } else if (instr.match(/^vdp(ps|pd)$/)) {
+            if (operands.length === 4) {
+                const imm = parseOperand(operands[0]);
+                const src1 = parseOperand(operands[1]);
+                const src2 = parseOperand(operands[2]);
+                const destReg = operands[3];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `dot_product(${formatValue(src1)}, ${formatValue(src2)}, ${formatValue(imm)})`
+                };
+            }
+        } else if (instr.match(/^round(ps|pd|ss|sd)$/)) {
+            if (operands.length === 3) {
+                const imm = parseOperand(operands[0]);
+                const src = parseOperand(operands[1]);
+                const destReg = operands[2];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `round(${formatValue(src)}, ${formatValue(imm)})`
+                };
+            }
+        } else if (instr.match(/^vround(ps|pd|ss|sd)$/)) {
+            if (operands.length >= 3) {
+                const destReg = operands[operands.length - 1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(...)`
+                };
+            }
+        } else if (instr.match(/^vbroadcast(ss|sd|f128)$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `broadcast(${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^vpbroadcast(b|w|d|q)$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `broadcast(${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^cvt(ps2pd|pd2ps|ss2sd|sd2ss|dq2ps|ps2dq|dq2pd|pd2dq|si2ss|si2sd|ss2si|sd2si|tt?(ps|pd|ss|sd)2(dq|pi))$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^vcvt(ps2pd|pd2ps|ss2sd|sd2ss|dq2ps|ps2dq|dq2pd|pd2dq|si2ss|si2sd|ss2si|sd2si|tt?(ps|pd|ss|sd)2(dq|pi))$/)) {
+            if (operands.length >= 2) {
+                const destReg = operands[operands.length - 1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(...)`
+                };
+            }
+        } else if (instr.startsWith('not')) {
+            if (operands.length === 1) {
+                const destReg = normalizeRegister(operands[0]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate') {
+                    const bits = 64;
+                    const mask = (1n << BigInt(bits)) - 1n;
+                    const result = Number((~BigInt(currentVal.value)) & mask);
+                    state.registers[destReg] = { type: 'immediate', value: result };
+                } else {
+                    state.registers[destReg] = { type: 'symbolic', expr: `~${formatValue(currentVal)}` };
+                }
+            }
+        } else if (instr.match(/^k(add|and|andn|mov|or|test|xnor|xor)(b|w|d|q)$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+
+                // These operate on mask registers %k0-%k7
+                const operation = instr.match(/^k([a-z]+)/)?.[1] || 'unknown';
+
+                if (operation === 'mov') {
+                    state.registers[destReg] = src;
+                } else if (operation === 'not') {
+                    if (src.type === 'immediate') {
+                        state.registers[destReg] = { type: 'immediate', value: ~src.value };
+                    } else {
+                        state.registers[destReg] = {
+                            type: 'symbolic',
+                            expr: `~${formatValue(src)}`
+                        };
+                    }
+                } else {
+                    const currentVal = state.registers[destReg] || { type: 'unknown' };
+                    const opSymbol = operation === 'add' ? '+' :
+                        operation === 'and' ? '&' :
+                            operation === 'andn' ? '&~' :
+                                operation === 'or' ? '|' :
+                                    operation === 'xor' ? '^' :
+                                        operation === 'xnor' ? '~^' : '?';
+
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `${formatValue(currentVal)} ${opSymbol} ${formatValue(src)}`
+                    };
+                }
+            }
+        } else if (instr.match(/^(prefetch(nta|t0|t1|t2)|prefetchw|clflush|clflushopt|clwb)$/)) {
+            // No register changes
+        } else if (instr.match(/^(lfence|mfence|sfence)$/)) {
+            // No register changes
+        } else if (instr.match(/^aes(enc|enclast|dec|declast|imc|keygenassist)$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = operands[1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(dest, ${formatValue(src)})`
+                };
+            }
+        } else if (instr.match(/^vaes(enc|enclast|dec|declast)$/)) {
+            if (operands.length === 3) {
+                const src1 = parseOperand(operands[0]);
+                const src2 = parseOperand(operands[1]);
+                const destReg = operands[2];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(${formatValue(src1)}, ${formatValue(src2)})`
+                };
+            }
+        } else if (instr.match(/^pclmul(l?[hl]q[hl]?qdq|qdq)$/)) {
+            if (operands.length >= 2) {
+                const destReg = operands[operands.length - 1];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `${instr}(...)`
+                };
+            }
+        } else if (instr.match(/^vpclmul(l?[hl]q[hl]?qdq|qdq)$/)) {
+            if (operands.length === 4) {
+                const imm = parseOperand(operands[0]);
+                const src1 = parseOperand(operands[1]);
+                const src2 = parseOperand(operands[2]);
+                const destReg = operands[3];
+
+                state.registers[destReg] = {
+                    type: 'symbolic',
+                    expr: `pclmulqdq(${formatValue(src1)}, ${formatValue(src2)}, ${formatValue(imm)})`
+                };
+            }
+        } else if (instr.match(/^(xsave|xsavec|xsaveopt|xsaves|xrstor|xrstors)(64)?$/)) {
+            // Uses %rax:%rdx as mask
+            // TODO: fully get this modeled
+            if (instr.startsWith('xsave')) {
+                // none
+            } else {
+                // Restoring state, every register potentially changes
+                const volatileRegs = ['%rax', '%rcx', '%rdx', '%rsi', '%rdi', '%r8', '%r9', '%r10', '%r11'];
+                volatileRegs.forEach(reg => [
+                    state.registers[reg] = { type: 'unknown' }
+                ]);
+            }
+        } else if (instr.match(/^(xgetbv|xsetbv)$/)) {
+            if (instr === 'xgetbv') {
+                state.registers['%rax'] = { type: 'symbolic', expr: 'xcr_low' };
+                state.registers['%rdx'] = { type: 'symbolic', expr: 'xcr_high' };
+            }
+        } else if (instr.match(/^adc[bwlq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const carryVal = state.flags.CF === '1' ? 1 : state.flags.CF === '0' ? 0 : null;
+
+                    if (carryVal !== null) {
+                        const result = currentVal.value + src.value + carryVal;
+                        state.registers[destReg] = { type: 'immediate', value: result };
+
+                        state.flags.ZF = result === 0 ? '1' : '0';
+                        state.flags.SF = result < 0 ? '1' : '0';
+                        state.flags.CF = result > 0xFFFFFFFF ? '1' : '0';
+                        state.flags.OF = 'overflow_check';
+                    } else {
+                        state.registers[destReg] = {
+                            type: 'symbolic',
+                            expr: `${formatValue(currentVal)} + ${formatValue(src)} + CF`
+                        };
+                        state.flags.ZF = 'result == 0';
+                        state.flags.SF = 'result < 0';
+                        state.flags.CF = 'carry';
+                    }
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `${formatValue(currentVal)} + ${formatValue(src)} + CF`
+                    };
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = 'carry';
+                }
+            }
+        } else if (instr.match(/^sbb[bwlq]?$/)) {
+            if (operands.length === 2) {
+                const src = parseOperand(operands[0]);
+                const destReg = normalizeRegister(operands[1]);
+                const currentVal = state.registers[destReg] || { type: 'unknown' };
+
+                if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                    const carryVal = state.flags.CF === '1' ? 1 : state.flags.CF === '0' ? 0 : null;
+
+                    if (carryVal !== null) {
+                        const result = currentVal.value - src.value - carryVal;
+                        state.registers[destReg] = { type: 'immediate', value: result };
+
+                        state.flags.ZF = result === 0 ? '1' : '0';
+                        state.flags.SF = result < 0 ? '1' : '0';
+                        state.flags.CF = result < 0 ? '1' : '0';
+                        state.flags.OF = 'overflow_check';
+                    } else {
+                        state.registers[destReg] = {
+                            type: 'symbolic',
+                            expr: `${formatValue(currentVal)} - ${formatValue(src)} - CF`
+                        };
+                        state.flags.ZF = 'result == 0';
+                        state.flags.SF = 'result < 0';
+                        state.flags.CF = 'borrow';
+                    }
+                } else {
+                    state.registers[destReg] = {
+                        type: 'symbolic',
+                        expr: `${formatValue(currentVal)} - ${formatValue(src)} - CF`
+                    };
+                    state.flags.ZF = 'result == 0';
+                    state.flags.SF = 'result < 0';
+                    state.flags.CF = 'borrow';
+                }
+            }
+        }
+        else {
             // Unknown instruction - mark destination register(s) as unknown
             // Most instructions modify their last operand in AT&T syntax
             if (operands.length > 0) {

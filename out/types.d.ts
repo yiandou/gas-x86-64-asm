@@ -70,6 +70,8 @@ export interface FlagState {
     CF?: string;
     SF?: string;
     OF?: string;
+    AF?: string;
+    PF?: string;
 }
 export interface FullState {
     registers: RegisterState;

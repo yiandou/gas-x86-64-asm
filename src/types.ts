@@ -65,6 +65,8 @@ export interface FlagState {
     CF?: string;
     SF?: string; // Sign flag
     OF?: string; // Overflow flag
+    AF?: string; // Aux carry flag
+    PF?: string; // Parity flag
 }
 
 export interface FullState {
