@@ -4,8 +4,6 @@ import { instructionDatabase } from './instr';
 import { LINUX_SYSCALLS } from './syscall';
 import { registerDatabase } from './register';
 import { directiveDatabase } from './directive';
-import { parse } from 'path';
-import { stat } from 'fs';
 
 function escapeHtml(text: string): string {
     return text
@@ -257,7 +255,6 @@ function analyzeFunctionInterface(document: vscode.TextDocument, functionName: s
             const operands = instrMatch[2].split(',').map(s => s.trim());
 
             // Track destination register for instructions that write to return registers
-            let writesToReturnReg = false;
             if (instrName.startsWith('mov') && operands.length === 2) {
                 const destOp = operands[1];
                 const destRegs = destOp.matchAll(/%([a-z0-9]+)/g);
@@ -265,7 +262,6 @@ function analyzeFunctionInterface(document: vscode.TextDocument, functionName: s
                     const reg = normalizeRegister(`%${match[1]}`);
                     if (RETURN_REGISTERS.includes(reg)) {
                         registersSetBeforeThisRet.add(reg);
-                        writesToReturnReg = true;
                     }
                 }
             } else if (instrName.startsWith('lea') ||
@@ -277,7 +273,6 @@ function analyzeFunctionInterface(document: vscode.TextDocument, functionName: s
                     const reg = normalizeRegister(`%${match[1]}`);
                     if (RETURN_REGISTERS.includes(reg)) {
                         registersSetBeforeThisRet.add(reg);
-                        writesToReturnReg = true;
                     }
                 }
             } else if (instrName.match(/^pop$/)) {
@@ -288,7 +283,6 @@ function analyzeFunctionInterface(document: vscode.TextDocument, functionName: s
                         const reg = normalizeRegister(`%${match[1]}`);
                         if (RETURN_REGISTERS.includes(reg)) {
                             registersSetBeforeThisRet.add(reg);
-                            writesToReturnReg = true;
                         }
                     }
                 }
@@ -617,7 +611,7 @@ class RegisterTreeItem extends vscode.TreeItem {
     constructor(
         public override readonly label: string,
         public override readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly itemType: 'category' | 'register' | 'register-after' | 'flag' | 'flag-after' | 'stack' | 'memory' | 'memory-after' | 'instruction' | 'stack-header',
+        public readonly itemType: 'category' | 'register' | 'register-after' | 'flag' | 'flag-after' | 'stack' | 'memory' | 'memory-after' | 'instruction' | 'stack-header' | 'fpu' | 'fpu-header',
         public readonly registerName?: string,
         public readonly value?: types.RegisterValue
     ) {
@@ -656,8 +650,9 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
         this.stateBefore = line > 0 ? analyzeRegisters(document, line - 1) : {
             registers: {},
             memory: {},
-            stack: { items: [], offset: 0 },
-            flags: {}
+            stack: { items: [] as types.RegisterValue[], offset: 0 },
+            flags: {},
+            fpuStack: { stack: Array(8).fill({ type: 'unknown' }), top: 0, statusWord: {} }
         };
         this.stateAfter = analyzeRegisters(document, line);
 
@@ -717,7 +712,7 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
                     : 'SIMD Registers';
                 categories.push(new RegisterTreeItem(
                     label,
-                    vscode.TreeItemCollapsibleState.Collapsed,
+                    vscode.TreeItemCollapsibleState.Expanded,
                     'category'
                 ));
             }
@@ -733,7 +728,7 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
                     : 'FPU Registers';
                 categories.push(new RegisterTreeItem(
                     label,
-                    vscode.TreeItemCollapsibleState.Collapsed,
+                    vscode.TreeItemCollapsibleState.Expanded,
                     'category'
                 ));
             }
@@ -749,7 +744,7 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
                     : 'Other Registers';
                 categories.push(new RegisterTreeItem(
                     label,
-                    vscode.TreeItemCollapsibleState.Collapsed,
+                    vscode.TreeItemCollapsibleState.Expanded,
                     'category'
                 ));
             }
@@ -791,6 +786,16 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
                     : `Memory (${memoryCount} locations)`;
                 categories.push(new RegisterTreeItem(
                     label,
+                    vscode.TreeItemCollapsibleState.Expanded,
+                    'category'
+                ));
+            }
+
+            // FPU stack
+            if (this.stateAfter.fpuStack && this.stateAfter.fpuStack.stack.some(v => v.type !== 'unknown')) {
+                const fpuCount = this.stateAfter.fpuStack.stack.filter(v => v.type !== 'unknown').length;
+                categories.push(new RegisterTreeItem(
+                    `FPU Stack (ST(${this.stateAfter.fpuStack.top}), ${fpuCount} values)`,
                     vscode.TreeItemCollapsibleState.Collapsed,
                     'category'
                 ));
@@ -843,7 +848,7 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
                 }
             } else if (element.label?.startsWith('Flags')) {
                 for (const [flag, afterCondition] of Object.entries(this.stateAfter.flags)) {
-                    const beforeCondition = this.stateBefore!.flags[flag];
+                    const beforeCondition = this.stateBefore!.flags[flag as keyof types.FlagState];
                     const changed = beforeCondition !== afterCondition;
 
                     if (changed) {
@@ -978,6 +983,44 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
                         items.push(item);
                     }
                 }
+            } else if (element.label?.startsWith('FPU Stack')) {
+                const fpuStack = this.stateAfter.fpuStack!;
+
+                // ST(0) - ST(7)
+                for (let i = 0; i < 8; i++) {
+                    const physicalIndex = (fpuStack.top + i) & 7;
+                    const value = fpuStack.stack[physicalIndex];
+
+                    if (value.type !== 'unknown') {
+                        const label = i === 0 ? `ST(0): ${formatValue(value)} ← top` : `ST(${i}): ${formatValue(value)}`;
+                        const item = new RegisterTreeItem(
+                            label,
+                            vscode.TreeItemCollapsibleState.None,
+                            'fpu'
+                        );
+                        item.iconPath = new vscode.ThemeIcon('symbol-number', new vscode.ThemeColor('charts.blue'));
+                        items.push(item);
+                    }
+                }
+
+                if (fpuStack.statusWord.C0 || fpuStack.statusWord.C2 || fpuStack.statusWord.C3) {
+                    const ccItem = new RegisterTreeItem(
+                        'Condition Codes:',
+                        vscode.TreeItemCollapsibleState.None,
+                        'fpu-header'
+                    );
+                    items.push(ccItem);
+
+                    if (fpuStack.statusWord.C0) {
+                        items.push(new RegisterTreeItem(`  C0: ${fpuStack.statusWord.C0}`, vscode.TreeItemCollapsibleState.None, 'fpu'));
+                    }
+                    if (fpuStack.statusWord.C2) {
+                        items.push(new RegisterTreeItem(`  C2: ${fpuStack.statusWord.C2}`, vscode.TreeItemCollapsibleState.None, 'fpu'));
+                    }
+                    if (fpuStack.statusWord.C3) {
+                        items.push(new RegisterTreeItem(`  C3: ${fpuStack.statusWord.C3}`, vscode.TreeItemCollapsibleState.None, 'fpu'));
+                    }
+                }
             }
 
             return Promise.resolve(items);
@@ -1006,7 +1049,7 @@ class RegisterStateProvider implements vscode.TreeDataProvider<RegisterTreeItem>
 
         // Flag changes
         for (const [flag, afterCond] of Object.entries(this.stateAfter!.flags)) {
-            const beforeCond = this.stateBefore!.flags[flag];
+            const beforeCond = this.stateBefore!.flags[flag as keyof types.FlagState];
             if (beforeCond !== afterCond) {
                 flagChanges.push({ name: flag, before: beforeCond || 'undefined', after: afterCond });
             }
@@ -1330,8 +1373,9 @@ function createHoverProvider(): vscode.HoverProvider {
                     const stateBefore = position.line > 0 ? analyzeRegisters(document, position.line - 1) : {
                         registers: {},
                         memory: {},
-                        stack: { items: [], offset: 0 },
-                        flags: {}
+                        stack: { items: [] as types.RegisterValue[], offset: 0 },
+                        flags: {},
+                        fpuStack: { stack: Array(8).fill({ type: 'unknown' }), top: 0, statusWord: {} }
                     };
                     const stateAfter = analyzeRegisters(document, position.line);
 
@@ -1340,7 +1384,7 @@ function createHoverProvider(): vscode.HoverProvider {
 
                     // Check register changes
                     for (const [reg, afterVal] of Object.entries(stateAfter.registers)) {
-                        const beforeVal = stateBefore.registers[reg];
+                        const beforeVal = (stateBefore.registers as any)[reg];
                         const afterStr = formatValue(afterVal);
                         const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
 
@@ -1356,7 +1400,7 @@ function createHoverProvider(): vscode.HoverProvider {
 
                     // Check flag changes
                     for (const [flag, afterCond] of Object.entries(stateAfter.flags)) {
-                        const beforeCond = stateBefore.flags[flag];
+                        const beforeCond = (stateBefore.flags as any)[flag];
                         if (beforeCond !== afterCond) {
                             changes.push({
                                 type: 'flag',
@@ -1379,7 +1423,7 @@ function createHoverProvider(): vscode.HoverProvider {
 
                     // Check memory changes
                     for (const [addr, afterVal] of Object.entries(stateAfter.memory)) {
-                        const beforeVal = stateBefore.memory[addr];
+                        const beforeVal = stateBefore.memory[addr as keyof typeof stateBefore.memory];
                         const afterStr = formatValue(afterVal);
                         const beforeStr = beforeVal ? formatValue(beforeVal) : 'undefined';
 
@@ -1552,7 +1596,12 @@ function analyzeRegisters(document: vscode.TextDocument, targetLine: number): ty
         registers: {},
         memory: {},
         stack: { items: [], offset: 0 },
-        flags: {}
+        flags: {},
+        fpuStack: {
+            stack: new Array(8).fill({ type: 'unknown' }),
+            top: 0,
+            statusWord: {}
+        }
     };
 
     let functionStart = 0;
@@ -1886,60 +1935,394 @@ function analyzeRegisters(document: vscode.TextDocument, targetLine: number): ty
                     state.registers[destReg] = { type: 'symbolic', expr: `${formatValue(currentVal)} ${op} ${formatValue(src)}` };
                 }
             }
-        } else if (instr.match(/^f(add|sub|mul|div|subr|divr)p?$/)) {
-            // Exact same handling for both, symbolic as it operates on FPU stack, pretty complex
-            // TODO: track the FPU stack
-            if (instr.endsWith('p')) {
-                // Pop version
-                state.registers['%st(0)'] = { type: 'symbolic', expr: `fpu_${instr}` };
+        } else if (instr.match(/^fld(s|l|t)?$/)) {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+
+            if (operands.length === 1) {
+                const src = parseOperand(operands[0]);
+
+                const stMatch = operands[0].match(/^%st\((\d+)\)$/);
+                if (stMatch) {
+                    const index = parseInt(stMatch[1]);
+                    const physicalIndex = (state.fpuStack.top + index) & 7;
+                    state.fpuStack.stack[state.fpuStack.top] = state.fpuStack.stack[physicalIndex];
+                } else {
+                    state.fpuStack.stack[state.fpuStack.top] = src;
+                }
             } else {
-                state.registers['%st(0)'] = { type: 'symbolic', expr: `fpu_${instr}` };
+                state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
             }
-        } else if (instr.match(/^f(sin|cos|sqrt|abs|chs|rndint)$/)) {
-            // Same here
-            state.registers['%st(0)'] = { type: 'symbolic', expr: `${instr}(%st(0))` };
-        } else if (instr.match(/^f(ld|ild|fld1|fldz|fldpi|fldl2e|fldl2t|fldlg2|fldln2)$/)) {
-            switch (instr) {
-                case 'fld1':
-                    state.registers['%st(0)'] = { type: 'symbolic', expr: '1.0' };
-                    break;
-                case 'fldz':
-                    state.registers['%st(0)'] = { type: 'symbolic', expr: '0.0' };
-                    break;
-                case 'fldpi':
-                    state.registers['%st(0)'] = { type: 'symbolic', expr: `π` };
-                    break;
-                case 'fldl2e':
-                    state.registers['%st(0)'] = { type: 'symbolic', expr: `log2(e)` };
-                    break;
-                case 'fldl2t':
-                    state.registers['%st(0)'] = { type: 'symbolic', expr: `log2(10)` };
-                    break;
-                case 'fldlg2':
-                    state.registers['%st(0)'] = { type: 'symbolic', expr: `log10(2)` };
-                    break;
-                case 'fldln2':
-                    state.registers['%st(0)'] = { type: 'symbolic', expr: `ln(2)` };
-                    break;
-                default:
-                    state.registers['%st(0)'] = { type: 'symbolic', expr: `load_from${operands[0] || 'stack'}` };
-            }
-        } else if (instr.match(/^f(st|stp|ist|istp)$/)) {
-            if (instr.endsWith('p')) {
-                state.registers['%st(0)'] = { type: 'unknown' };
-            }
-        } else if (instr.match(/^f(xch|free|nop)$/)) {
-            // FPU stack manip
-            if (instr === 'fxch') {
-                const temp = state.registers['%st(0)'];
-                state.registers['%st(0)'] = state.registers['%st(1)'] || { type: 'unknown' };
-                state.registers['%st(1)'] = temp || { type: 'unknown' };
-            } else if (instr === 'ffree') {
-                if (operands.length === 1) {
-                    state.registers[operands[0]] = { type: 'unknown' };
+
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fld1') {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: '1.0' };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fldz') {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: '0.0' };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fldpi') {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: 'pi' };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fldl2e') {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: 'log2(e)' };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fldl2t') {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: 'log2(10)' };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fldlg2') {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: 'log10(2)' };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fldln2') {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: 'ln(2)' };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^fild(l|ll|s)?$/)) {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+
+            if (operands.length === 1) {
+                const src = parseOperand(operands[0]);
+                if (src.type === 'immediate') {
+                    state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: `${src.value}.0` };
+                } else {
+                    state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr: `float(${formatValue(src)})` };
                 }
             }
-        } else if (instr.startsWith('lea')) {
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^fst(s|l|t)$/)) {
+            if (operands.length === 1) {
+                const dest = operands[0];
+                const st0Val = state.fpuStack.stack[state.fpuStack.top];
+
+                const stMatch = dest.match(/^%st\((\d+)\)$/);
+                if (stMatch) {
+                    const index = parseInt(stMatch[1]);
+                    const physicalIndex = (state.fpuStack.top + index) & 7;
+                    state.fpuStack.stack[physicalIndex] = st0Val;
+                }
+                // Store to memory otherwise, do later
+            }
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^fstp(s|l|t)?$/)) {
+            if (operands.length === 1) {
+                const dest = operands[0];
+                const st0Value = state.fpuStack.stack[state.fpuStack.top];
+
+                const stMatch = dest.match(/^%st\((\d+)\)$/);
+                if (stMatch) {
+                    const index = parseInt(stMatch[1]);
+                    const physicalIndex = (state.fpuStack.top + index) & 7;
+                    state.fpuStack.stack[physicalIndex] = st0Value;
+                }
+            }
+
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+            state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^fist(p)?(l|ll|s)?$/)) {
+            const shouldPop = instr.includes('p');
+
+            if (shouldPop) {
+                state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+            }
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^fadd(p)?$/)) {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            const st1Index = (state.fpuStack.top + 1) & 7;
+            const st1 = state.fpuStack.stack[st1Index];
+
+            const shouldPop = instr.endsWith('p');
+
+            if (operands.length === 0 || operands[0] === '%st(1)') {
+                state.fpuStack.stack[st1Index] = {
+                    type: 'symbolic',
+                    expr: `${formatValue(st1)} + ${formatValue(st0)}`
+                };
+
+                if (shouldPop) {
+                    state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                    state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+                }
+            } else {
+                const stMatch = operands[0].match(/^%st\((\d+)\)$/);
+                if (stMatch) {
+                    const index = parseInt(stMatch[1]);
+                    const physicalIndex = (state.fpuStack.top + index) & 7;
+                    const sti = state.fpuStack.stack[physicalIndex];
+
+                    state.fpuStack.stack[state.fpuStack.top] = {
+                        type: 'symbolic',
+                        expr: `${formatValue(st0)} + ${formatValue(sti)}`
+                    };
+                }
+            }
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^fsub(p|r|rp)?$/)) {
+            // Subtract operations
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            const st1Index = (state.fpuStack.top + 1) & 7;
+            const st1 = state.fpuStack.stack[st1Index];
+
+            const isReverse = instr.includes('r');
+            const shouldPop = instr.endsWith('p');
+
+            if (operands.length === 0) {
+                // Basic fsub/fsubr/fsubp/fsubrp
+                if (isReverse) {
+                    // ST(1) = ST(0) - ST(1)
+                    state.fpuStack.stack[st1Index] = {
+                        type: 'symbolic',
+                        expr: `${formatValue(st0)} - ${formatValue(st1)}`
+                    };
+                } else {
+                    // ST(1) = ST(1) - ST(0)
+                    state.fpuStack.stack[st1Index] = {
+                        type: 'symbolic',
+                        expr: `${formatValue(st1)} - ${formatValue(st0)}`
+                    };
+                }
+
+                if (shouldPop) {
+                    state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                    state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+                }
+            }
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^fmul(p)?$/)) {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            const st1Index = (state.fpuStack.top + 1) & 7;
+            const st1 = state.fpuStack.stack[st1Index];
+
+            const shouldPop = instr.endsWith('p');
+
+            if (operands.length === 0 || operands[0] === '%st(1)') {
+                state.fpuStack.stack[st1Index] = {
+                    type: 'symbolic',
+                    expr: `${formatValue(st1)} * ${formatValue(st0)}`
+                };
+
+                if (shouldPop) {
+                    state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                    state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+                }
+            }
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^fdiv(p|r|rp)?$/)) {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            const st1Index = (state.fpuStack.top + 1) & 7;
+            const st1 = state.fpuStack.stack[st1Index];
+
+            const isReverse = instr.includes('r');
+            const shouldPop = instr.endsWith('p');
+
+            if (operands.length === 0) {
+                if (isReverse) {
+                    state.fpuStack.stack[st1Index] = {
+                        type: 'symbolic',
+                        expr: `${formatValue(st0)} / ${formatValue(st1)}`
+                    };
+                } else {
+                    state.fpuStack.stack[st1Index] = {
+                        type: 'symbolic',
+                        expr: `${formatValue(st1)} / ${formatValue(st0)}`
+                    };
+                }
+
+                if (shouldPop) {
+                    state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                    state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+                }
+            }
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fsqrt') {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `sqrt(${formatValue(st0)})`
+            };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fabs') {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `abs(${formatValue(st0)})`
+            };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fchs') {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `-${formatValue(st0)}`
+            };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fsin') {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `sin(${formatValue(st0)})`
+            };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fcos') {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `cos(${formatValue(st0)})`
+            };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fsincos') {
+            // Replace ST(0) w/ sin, push cos
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `sin(${formatValue(st0)})`
+            };
+
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `cos(${formatValue(st0)})`
+            };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fptan') {
+            // ST(0) = tan(ST(0)), push 1.0
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `tan(${formatValue(st0)})`
+            };
+
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `1.0`
+            };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fpatan') {
+            // ST(1) = arctan(ST(1)/ST(0)), pop both, push res
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            const st1Index = (state.fpuStack.top + 1) & 7;
+            const st1 = state.fpuStack.stack[st1Index];
+
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+            state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+
+            state.fpuStack.stack[state.fpuStack.top] = {
+                type: 'symbolic',
+                expr: `atan2(${formatValue(st1)}, ${formatValue(st0)})`
+            };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr.match(/^f(yl2x|yl2xp1|2xm1)$/)) {
+            // Log and exp functions
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            const st1Index = (state.fpuStack.top + 1) & 7;
+            const st1 = state.fpuStack.stack[st1Index];
+
+            let expr: string;
+            if (instr === 'fyl2x') {
+                // ST(1) * log2(ST(0)), pop ST(0)
+                expr = `${formatValue(st1)} * log₂(${formatValue(st0)})`;
+            } else if (instr === 'fyl2xp1') {
+                // ST(1) * log2(ST(0) + 1), pop ST(0)
+                expr = `${formatValue(st1)} * log₂(${formatValue(st0)} + 1)`;
+            } else {
+                // 2^ST(0) - 1
+                expr = `2^${formatValue(st0)} - 1`;
+            }
+
+            // Pop ST(0)
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+            state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+
+            // Store res
+            state.fpuStack.stack[state.fpuStack.top] = { type: 'symbolic', expr };
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'fxch') {
+            let index = 1;
+
+            if (operands.length === 1) {
+                const stMatch = operands[0].match(/^%st\((\d+)\)$/);
+                if (stMatch) {
+                    index = parseInt(stMatch[1]);
+                }
+            }
+
+            const physicalIndex = (state.fpuStack.top + index) & 7;
+            const temp = state.fpuStack.stack[state.fpuStack.top];
+            state.fpuStack.stack[state.fpuStack.top] = state.fpuStack.stack[physicalIndex];
+            state.fpuStack.stack[physicalIndex] = temp;
+            state.fpuStack.statusWord.C1 = '0';
+        } else if (instr === 'ffree') {
+            if (operands.length === 1) {
+                const stMatch = operands[0].match(/^%st\((\d+)\)$/);
+                if (stMatch) {
+                    const index = parseInt(stMatch[1]);
+                    const physicalIndex = (state.fpuStack.top + index) & 7;
+                    state.fpuStack.stack[physicalIndex] = { type: 'unknown' };
+                }
+            }
+        } else if (instr === 'fincstp') {
+            state.fpuStack.top = (state.fpuStack.top - 1) & 7;
+        } else if (instr === 'fdecstp') {
+            state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+        } else if (instr.match(/^fcom(p|pp)?$/)) {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            let other: types.RegisterValue;
+
+            if (operands.length === 0) {
+                const st1Index = (state.fpuStack.top + 1) & 7;
+                other = state.fpuStack.stack[st1Index];
+            } else {
+                const stMatch = operands[0].match(/^%st\((\d+)\)$/);
+                if (stMatch) {
+                    const index = parseInt(stMatch[1]);
+                    const physicalIndex = (state.fpuStack.top + index) & 7;
+                    other = state.fpuStack.stack[physicalIndex];
+                } else {
+                    other = parseOperand(operands[0]);
+                }
+            }
+
+            state.fpuStack.statusWord.C0 = `${formatValue(st0)} < ${formatValue(other)}`;
+            state.fpuStack.statusWord.C2 = `${formatValue(st0)} == ${formatValue(other)} (unordered)`;
+            state.fpuStack.statusWord.C3 = `${formatValue(st0)} == ${formatValue(other)}`;
+
+            if (instr === 'fcomp') {
+                state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+            } else if (instr === 'fcompp') {
+                state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+                state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+            }
+        } else if (instr.match(/^fucom(p|pp)?$/)) {
+            const st0 = state.fpuStack.stack[state.fpuStack.top];
+            const st1Index = (state.fpuStack.top + 1) & 7;
+            const st1 = state.fpuStack.stack[st1Index];
+
+            state.fpuStack.statusWord.C0 = `${formatValue(st0)} < ${formatValue(st1)}`;
+            state.fpuStack.statusWord.C2 = `unordered`;
+            state.fpuStack.statusWord.C3 = `${formatValue(st0)} == ${formatValue(st1)}`;
+
+            if (instr === 'fucomp') {
+                state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+            } else if (instr === 'fucompp') {
+                state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+                state.fpuStack.stack[state.fpuStack.top] = { type: 'unknown' };
+                state.fpuStack.top = (state.fpuStack.top + 1) & 7;
+            }
+        }
+        else if (instr.startsWith('lea')) {
             if (operands.length === 2) {
                 const destReg = normalizeRegister(operands[1]);
                 const src = operands[0];
@@ -3965,7 +4348,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    const completionProvider = vscode.languages.registerCompletionItemProvider(
+    /* const completionProvider = vscode.languages.registerCompletionItemProvider(
         'gas-asm',
         {
             provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
@@ -4026,6 +4409,7 @@ export function activate(context: vscode.ExtensionContext) {
         },
         '.', '%'
     );
+    */
 
     const hoverProvider = vscode.languages.registerHoverProvider('gas-asm', createHoverProvider());
 
@@ -4113,7 +4497,6 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     context.subscriptions.push(
-        completionProvider,
         hoverProvider,
         signatureHelpProvider,
         documentSymbolProvider

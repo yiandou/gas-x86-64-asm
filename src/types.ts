@@ -74,6 +74,7 @@ export interface FullState {
     memory: MemoryState;
     stack: StackState;
     flags: FlagState;
+    fpuStack: FPUStackState;
 }
 
 export interface FunctionInfo {
@@ -99,3 +100,15 @@ export interface DeadCodeRange {
     range: vscode.Range;
     reason: string;
 };
+
+export interface FPUStackState {
+    stack: RegisterValue[]; // ST(0) index 0, ST(7) index 7
+    top: number; // Top pointer/index 0-7
+    statusWord: {
+        C0?: string;
+        C1?: string;
+        C2?: string;
+        C3?: string;
+        stackFault?: boolean;
+    };
+}
