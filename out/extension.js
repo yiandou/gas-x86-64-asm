@@ -274,6 +274,72 @@ function getMemoryKey(addr) {
     }
     return null;
 }
+/**
+ * Parse a memory operand string (e.g. -8(%rbp), "(%rax, %rbx, 4)") into the canonical key
+ * used in state.memory, using same rules as mov handler
+ * %rbp/%rsp base registers are kept by name for readability, others are expanded.
+ * @param {string} operand - memory operand string to parse
+ * @param {types.FullState} state - state
+ * @returns {string | null} - canonical key
+ */
+function parseMemoryOperand(operand, state) {
+    const memMatch = operand.match(/^(-?\d+)?\((%[a-z0-9]+)(?:,\s*(%[a-z0-9]+)(?:,\s*([1248]))?)?\)$/);
+    if (!memMatch)
+        return null;
+    const offset = memMatch[1] ? parseInt(memMatch[1]) : 0;
+    const baseReg = normalizeRegister(memMatch[2]);
+    const indexReg = memMatch[3] ? normalizeRegister(memMatch[3]) : null;
+    const scale = memMatch[4] ? parseInt(memMatch[4]) : 1;
+    const baseVal = state.registers[baseReg] || { type: 'symbolic', expr: baseReg };
+    const indexVal = indexReg ? (state.registers[indexReg] || { type: 'symbolic', expr: indexReg }) : null;
+    // Concrete address, fold to hex key
+    if (baseVal.type === 'immediate' && (!indexVal || indexVal.type === 'immediate')) {
+        let addr = baseVal.value + offset;
+        if (indexVal && indexVal.type === 'immediate')
+            addr += indexVal.value * scale;
+        return `0x${addr.toString(16)}`;
+    }
+    // Frame-pointer-relative, keep register name to avoid expanding
+    const isFrameBase = baseReg === '%rbp' || baseReg === '%rsp';
+    const baseStr = isFrameBase ? baseReg : formatValue(baseVal);
+    let addrExpr = baseStr;
+    if (offset !== 0)
+        addrExpr += offset > 0 ? ` + ${offset}` : ` - ${-offset}`;
+    if (indexVal) {
+        addrExpr += scale === 1
+            ? ` + ${formatValue(indexVal)}`
+            : ` + ${formatValue(indexVal)} * ${scale}`;
+    }
+    return addrExpr;
+}
+// Resolve the current value of an operand that may be a register or a memory
+// location.  For memory operands the value comes from state.memory; unknown
+// memory reads return {type:'unknown'}.
+function resolveOperand(operand, state) {
+    const memKey = parseMemoryOperand(operand, state);
+    if (memKey !== null) {
+        return state.memory[memKey] ?? { type: 'unknown' };
+    }
+    return resolveValue(state, parseOperand(operand));
+}
+// Write a value to an operand that may be a register or a memory location
+function writeOperand(operand, value, instr, state) {
+    const memKey = parseMemoryOperand(operand, state);
+    if (memKey !== null) {
+        // Memory destination, mask to instruction width if immediate
+        if (value.type === 'immediate') {
+            const bits = instrBits(instr);
+            const masked = bits === 32 ? (value.value >>> 0) & bitMask(bits) : value.value;
+            state.memory[memKey] = { type: 'immediate', value: masked };
+        }
+        else {
+            state.memory[memKey] = value;
+        }
+        return;
+    }
+    // Register destination
+    setRegister(state, operand, value);
+}
 // Format flag states for display
 function formatFlags(flags) {
     const parts = [];
@@ -1776,6 +1842,24 @@ function analyzeRegisters(document, targetLine) {
                 state.registers['%rsp'] = evaluateBinary('+', rspVal, { type: 'immediate', value: 8 });
             }
         }
+        else if (instr.match(/^leave[q]?$/)) {
+            // leave = movq %rbp, %rsp; popq %rbp
+            // Restore %rsp from %rbp, then restore %rbp from stack
+            const savedRbp = state.registers['%rbp'] || { type: 'unknown' };
+            // %rsp = %rbp
+            state.registers['%rsp'] = savedRbp;
+            // pop %rbp
+            if (state.stack.items.length > 0) {
+                setRegister(state, '%rbp', state.stack.items.pop());
+                state.stack.offset += 8;
+            }
+            else {
+                setRegister(state, '%rbp', { type: 'unknown' });
+            }
+            // Frame torn, clear alloc size and frame slots
+            state.stack.frameBytes = 0;
+            cleanFrameSlots(state);
+        }
         // Handle memory operations
         else if (instr.match(/^movz(b[wlq]|w[lq])$/) && operands.length === 2) {
             // 32-bit dest is implicit zero-extend to 64-bit because Intel logic
@@ -1970,16 +2054,16 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.match(/^add[bwlq]?$/)) {
             if (operands.length === 2) {
                 const src = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(rawDestReg);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const destOp = operands[1];
+                const destReg = normalizeRegister(destOp);
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
                     const bits = instrBits(instr);
                     const maxVal = bitMask(bits);
                     const signBit = signBitMask(bits);
                     const result = currentVal.value + src.value;
                     const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
-                    setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
+                    writeOperand(destOp, { type: 'immediate', value: maskedResult }, instr, state);
                     // addq $n, %rsp: stack dealloc. Reduce tracked frame size
                     if (destReg === '%rsp' && src.type === 'immediate') {
                         state.stack.offset += src.value;
@@ -1995,7 +2079,7 @@ function analyzeRegisters(document, targetLine) {
                     state.flags.AF = ((currentVal.value & 0xF) + (src.value & 0xF)) > 0xF ? '1' : '0';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('+', currentVal, src));
+                    writeOperand(destOp, evaluateBinary('+', currentVal, src), instr, state);
                     // addq $n, %rsp: stack dealloc. Pop frame-reservation sentinel if present
                     if (destReg === '%rsp' && src.type === 'immediate') {
                         state.stack.offset += src.value;
@@ -2011,16 +2095,16 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.match(/^sub[bwlq]?$/)) {
             if (operands.length === 2) {
                 const src = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const destOp = operands[1];
+                const destReg = normalizeRegister(destOp);
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
                     const bits = instrBits(instr);
                     const maxVal = bitMask(bits);
                     const signBit = signBitMask(bits);
                     const result = currentVal.value - src.value;
                     const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
-                    setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
+                    writeOperand(destOp, { type: 'immediate', value: maskedResult }, instr, state);
                     // subq $n, %rsp: stack alloc. Push sentinel entry to show reserved space explicitly
                     if (destReg === '%rsp' && src.type === 'immediate') {
                         state.stack.offset -= src.value;
@@ -2036,7 +2120,7 @@ function analyzeRegisters(document, targetLine) {
                     state.flags.AF = ((currentVal.value & 0xF) - (src.value & 0xF)) < 0 ? '1' : '0';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('-', currentVal, src));
+                    writeOperand(destOp, evaluateBinary('-', currentVal, src), instr, state);
                     // subq $n, %rsp: stack alloc. Push sentinel entry to show reserved space explicitly
                     if (destReg === '%rsp' && src.type === 'immediate') {
                         state.stack.offset -= src.value;
@@ -2092,10 +2176,9 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.startsWith('add')) {
             if (operands.length === 2) {
                 const src = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
-                setRegister(state, rawDestReg, evaluateBinary('+', currentVal, src));
+                const destOp = operands[1];
+                const currentVal = resolveOperand(destOp, state);
+                writeOperand(destOp, evaluateBinary('+', currentVal, src), instr, state);
                 // Set flags
                 state.flags.ZF = `result == 0`;
                 state.flags.SF = `result < 0`;
@@ -2104,10 +2187,9 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.startsWith('sub')) {
             if (operands.length === 2) {
                 const src = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
-                setRegister(state, rawDestReg, evaluateBinary('-', currentVal, src));
+                const destOp = operands[1];
+                const currentVal = resolveOperand(destOp, state);
+                writeOperand(destOp, evaluateBinary('-', currentVal, src), instr, state);
                 // Set flags
                 state.flags.ZF = `result == 0`;
                 state.flags.SF = `result < 0`;
@@ -2259,23 +2341,22 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^(inc)[bwlq]?$/)) {
             if (operands.length === 1) {
-                const rawDestReg = operands[0];
-                const destReg = normalizeRegister(operands[0]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const destOp = operands[0];
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate') {
                     const bits = instrBits(instr);
                     const maxVal = bitMask(bits);
                     const signBit = signBitMask(bits);
                     const result = currentVal.value + 1;
                     const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
-                    setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
+                    writeOperand(destOp, { type: 'immediate', value: maskedResult }, instr, state);
                     state.flags.ZF = maskedResult === 0 ? '1' : '0';
                     state.flags.SF = (maskedResult & signBit) ? '1' : '0';
                     state.flags.OF = currentVal.value === (signBit - 1) ? '1' : '0';
                     state.flags.AF = (currentVal.value & 0xF) === 0xF ? '1' : '0';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('+', currentVal, { type: 'immediate', value: 1 }));
+                    writeOperand(destOp, evaluateBinary('+', currentVal, { type: 'immediate', value: 1 }), instr, state);
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.OF = 'overflow';
@@ -2284,23 +2365,22 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^(dec)[bwlq]?$/)) {
             if (operands.length === 1) {
-                const rawDestReg = operands[0];
-                const destReg = normalizeRegister(operands[0]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const destOp = operands[0];
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate') {
                     const bits = instrBits(instr);
                     const maxVal = bitMask(bits);
                     const signBit = signBitMask(bits);
                     const result = currentVal.value - 1;
                     const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
-                    setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
+                    writeOperand(destOp, { type: 'immediate', value: maskedResult }, instr, state);
                     state.flags.ZF = maskedResult === 0 ? '1' : '0';
                     state.flags.SF = (maskedResult & signBit) ? '1' : '0';
                     state.flags.OF = currentVal.value === signBit ? '1' : '0';
                     state.flags.AF = (currentVal.value & 0xF) === 0 ? '1' : '0';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('-', currentVal, { type: 'immediate', value: 1 }));
+                    writeOperand(destOp, evaluateBinary('-', currentVal, { type: 'immediate', value: 1 }), instr, state);
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.OF = 'overflow';
@@ -2309,22 +2389,21 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^(neg)[bwlq]?$/)) {
             if (operands.length === 1) {
-                const rawDestReg = operands[0];
-                const destReg = normalizeRegister(operands[0]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const destOp = operands[0];
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate') {
                     const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
                     const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
                     const signBit = 1 << (bits - 1);
                     const result = bits === 32 ? ((-currentVal.value) >>> 0) & maxVal : (-currentVal.value) & maxVal;
-                    setRegister(state, rawDestReg, { type: 'immediate', value: result });
+                    writeOperand(destOp, { type: 'immediate', value: result }, instr, state);
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = (result & signBit) ? '1' : '0';
                     state.flags.CF = currentVal.value !== 0 ? '1' : '0';
                     state.flags.OF = currentVal.value === signBit ? '1' : '0';
                 }
                 else {
-                    setRegister(state, rawDestReg, { type: 'symbolic', expr: `-${formatValue(currentVal)}` });
+                    writeOperand(destOp, { type: 'symbolic', expr: `-${formatValue(currentVal)}` }, instr, state);
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = 'operand != 0';
@@ -2334,15 +2413,14 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^(and)[bwlq]?$/)) {
             if (operands.length === 2) {
-                const src = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const src = resolveOperand(operands[0], state);
+                const destOp = operands[1];
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
                     const result = currentVal.value & src.value;
                     const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
                     const signBit = 1 << (bits - 1);
-                    setRegister(state, rawDestReg, { type: 'immediate', value: result });
+                    writeOperand(destOp, { type: 'immediate', value: result }, instr, state);
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = (result & signBit) ? '1' : '0';
                     // Always cleard
@@ -2357,7 +2435,7 @@ function analyzeRegisters(document, targetLine) {
                     state.flags.PF = (count % 2 === 0) ? '1' : '0';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('&', currentVal, src));
+                    writeOperand(destOp, evaluateBinary('&', currentVal, src), instr, state);
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = '0';
@@ -2368,15 +2446,14 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.match(/^(or)[bwlq]?$/)) {
             // or src, dest - dest = dest | src
             if (operands.length === 2) {
-                const src = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const src = resolveOperand(operands[0], state);
+                const destOp = operands[1];
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
                     const result = currentVal.value | src.value;
                     const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
                     const signBit = 1 << (bits - 1);
-                    setRegister(state, rawDestReg, { type: 'immediate', value: result });
+                    writeOperand(destOp, { type: 'immediate', value: result }, instr, state);
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = (result & signBit) ? '1' : '0';
                     // Always cleared
@@ -2391,7 +2468,7 @@ function analyzeRegisters(document, targetLine) {
                     state.flags.PF = (count % 2 === 0) ? '1' : '0';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('|', currentVal, src));
+                    writeOperand(destOp, evaluateBinary('|', currentVal, src), instr, state);
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = '0';
@@ -2401,60 +2478,62 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.startsWith('xor')) {
             if (operands.length === 2) {
-                const src = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const destOp = operands[1];
+                const destReg = normalizeRegister(destOp);
                 const rawSrcParse = parseOperand(operands[0]);
                 if (rawSrcParse.type === 'register' && rawSrcParse.reg === destReg) {
-                    setRegister(state, rawDestReg, { type: 'immediate', value: 0 });
+                    setRegister(state, destOp, { type: 'immediate', value: 0 });
                     state.flags.ZF = '1';
                     state.flags.SF = '0';
                     state.flags.CF = '0';
                     state.flags.OF = '0';
                     state.flags.PF = '1';
                 }
-                else if (currentVal.type === 'immediate' && src.type === 'immediate') {
-                    const bits = instrBits(instr);
-                    const signBit = signBitMask(bits);
-                    const result = bits === 32 ? (currentVal.value ^ src.value) >>> 0 : (currentVal.value ^ src.value);
-                    setRegister(state, rawDestReg, { type: 'immediate', value: result });
-                    state.flags.ZF = result === 0 ? '1' : '0';
-                    state.flags.SF = (result & signBit) ? '1' : '0';
-                    // Always cleared
-                    state.flags.CF = '0';
-                    state.flags.OF = '0';
-                    const lowByte = result & 0xFF;
-                    let count = 0;
-                    for (let i = 0; i < 8; i++) {
-                        if (lowByte & (1 << i))
-                            count++;
-                    }
-                    state.flags.PF = (count % 2 === 0) ? '1' : '0';
-                }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('^', currentVal, src));
-                    state.flags.ZF = 'result == 0';
-                    state.flags.SF = 'result < 0';
-                    state.flags.CF = '0';
-                    state.flags.OF = '0';
+                    const src = resolveOperand(operands[0], state);
+                    const currentVal = resolveOperand(destOp, state);
+                    if (currentVal.type === 'immediate' && src.type === 'immediate') {
+                        const bits = instrBits(instr);
+                        const signBit = signBitMask(bits);
+                        const result = bits === 32
+                            ? (currentVal.value ^ src.value) >>> 0
+                            : (currentVal.value ^ src.value);
+                        writeOperand(destOp, { type: 'immediate', value: result }, instr, state);
+                        state.flags.ZF = result === 0 ? '1' : '0';
+                        state.flags.SF = (result & signBit) ? '1' : '0';
+                        state.flags.CF = '0';
+                        state.flags.OF = '0';
+                        const lowByte = result & 0xFF;
+                        let count = 0;
+                        for (let i = 0; i < 8; i++) {
+                            if (lowByte & (1 << i))
+                                count++;
+                        }
+                        state.flags.PF = (count % 2 === 0) ? '1' : '0';
+                    }
+                    else {
+                        writeOperand(destOp, evaluateBinary('^', currentVal, src), instr, state);
+                        state.flags.ZF = 'result == 0';
+                        state.flags.SF = 'result < 0';
+                        state.flags.CF = '0';
+                        state.flags.OF = '0';
+                    }
                 }
             }
         }
         else if (instr.startsWith('shl') || instr.startsWith('sal')) {
             // shl src, dest - dest = dest << src
             if (operands.length === 2) {
-                const count = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const count = resolveOperand(operands[0], state);
+                const destOp = operands[1];
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate' && count.type === 'immediate') {
                     const bits = instrBits(instr);
                     const shiftCount = count.value & (bits - 1);
                     const result = bits === 32
                         ? (currentVal.value << shiftCount) >>> 0
-                        : (currentVal.value * Math.pow(2, shiftCount)); // Avoid 32-bit truncation for 64-bit
-                    setRegister(state, rawDestReg, { type: 'immediate', value: result });
+                        : (currentVal.value * Math.pow(2, shiftCount));
+                    writeOperand(destOp, { type: 'immediate', value: result }, instr, state);
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = result < 0 ? '1' : '0';
                     state.flags.CF = shiftCount > 0
@@ -2462,7 +2541,7 @@ function analyzeRegisters(document, targetLine) {
                         : 'unchanged';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('<<', currentVal, count));
+                    writeOperand(destOp, evaluateBinary('<<', currentVal, count), instr, state);
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = 'last_bit_shifted';
@@ -2472,23 +2551,22 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.startsWith('shr')) {
             // shr src, dest - dest = dest >> src
             if (operands.length === 2) {
-                const count = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const count = resolveOperand(operands[0], state);
+                const destOp = operands[1];
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate' && count.type === 'immediate') {
                     const bits = instrBits(instr);
                     const shiftCount = count.value & (bits - 1);
                     const result = (currentVal.value >>> shiftCount);
-                    setRegister(state, rawDestReg, { type: 'immediate', value: result });
+                    writeOperand(destOp, { type: 'immediate', value: result }, instr, state);
                     state.flags.ZF = result === 0 ? '1' : '0';
-                    state.flags.SF = '0'; // Always 0 for logical shift
+                    state.flags.SF = '0';
                     state.flags.CF = shiftCount > 0
                         ? ((currentVal.value >>> (shiftCount - 1)) & 1) ? '1' : '0'
                         : 'unchanged';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('>>', currentVal, count));
+                    writeOperand(destOp, evaluateBinary('>>', currentVal, count), instr, state);
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = 'last_bit_shifted';
@@ -2497,16 +2575,14 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.startsWith('sar')) {
             if (operands.length === 2) {
-                const count = resolveValue(state, parseOperand(operands[0]));
-                const rawDestReg = operands[1];
-                const destReg = normalizeRegister(operands[1]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const count = resolveOperand(operands[0], state);
+                const destOp = operands[1];
+                const currentVal = resolveOperand(destOp, state);
                 if (currentVal.type === 'immediate' && count.type === 'immediate') {
                     const bits = instrBits(instr);
                     const shiftCount = count.value & (bits - 1);
-                    // Arithmetic shift preserves sign bit
                     const result = currentVal.value >> shiftCount;
-                    setRegister(state, rawDestReg, { type: 'immediate', value: result });
+                    writeOperand(destOp, { type: 'immediate', value: result }, instr, state);
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = result < 0 ? '1' : '0';
                     state.flags.CF = shiftCount > 0
@@ -2514,7 +2590,7 @@ function analyzeRegisters(document, targetLine) {
                         : 'unchanged';
                 }
                 else {
-                    setRegister(state, rawDestReg, evaluateBinary('>>', currentVal, count));
+                    writeOperand(destOp, evaluateBinary('>>', currentVal, count), instr, state);
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = 'last_bit_shifted';
