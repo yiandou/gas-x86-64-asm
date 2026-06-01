@@ -132,8 +132,7 @@ function setRegister(state, rawReg, value) {
         else {
             // Symbolic, cannot fold, know zero-extended
             state.registers[canonical] = {
-                type: 'symbolic',
-                expr: `zext32(${formatValue(value)})`
+                type: 'unknown'
             };
         }
         return;
@@ -204,6 +203,44 @@ function parseOperand(operand) {
     }
     // Memory reference or symbolic
     return { type: 'symbolic', expr: operand };
+}
+// Resolves a parsed value through register state
+// If value is a register reference, return the register's current tracked value.
+function resolveValue(state, value) {
+    if (value.type === 'register') {
+        return state.registers[value.reg] ?? { type: 'unknown' };
+    }
+    return value;
+}
+// Compute correct unsigned bitmask for arithmetic folding
+// NOTE: JavaScript's bitwise ops work on signed 32-bit integers, ie
+// 1 << 32 wraps to 1, (1 << 32) - 1 is 0, so use hex literals for widths
+// 64-bit case returns Number.MAX_SAFE_INTEGER since JS doubles can't represent 2^64 - 1 exactly
+// The write goes through setRegister, applies >>> 0 for 32-bit, direct assignment for 64-bit
+function bitMask(bits) {
+    switch (bits) {
+        case 8: return 0xFF;
+        case 16: return 0xFFFF;
+        case 32: return 0xFFFFFFFF;
+        case 64: return Number.MAX_SAFE_INTEGER;
+    }
+}
+function signBitMask(bits) {
+    switch (bits) {
+        case 8: return 0x80;
+        case 16: return 0x8000;
+        case 32: return 0x80000000;
+        case 64: return 0x8000000000000000; // Approximate, JS can't represent accurately
+    }
+}
+function instrBits(instr) {
+    if (instr.endsWith('b'))
+        return 8;
+    if (instr.endsWith('w'))
+        return 16;
+    if (instr.endsWith('l'))
+        return 32;
+    return 64;
 }
 function formatValue(value, depth = 0) {
     if (depth > 5)
@@ -285,6 +322,8 @@ function analyzeFunctionInterface(document, functionName) {
         return null;
     }
     // Find the end of the function (next label or last ret)
+    // dot-local: .Lloop, numeric local: 1: 42:
+    const ANY_LABEL_RE = /^(\d+|[a-zA-Z_.][a-zA-Z0-9_.]*):\s*$/;
     let lastRetLine = -1;
     for (let i = startLine + 1; i < document.lineCount; i++) {
         const line = document.lineAt(i).text.trim();
@@ -293,7 +332,7 @@ function analyzeFunctionInterface(document, functionName) {
             lastRetLine = i;
         }
         // Stop at next function label
-        if (line.match(/^[a-zA-Z_][a-zA-Z0-9_]*:$/)) {
+        if (ANY_LABEL_RE.test(line)) {
             endLine = i - 1;
             break;
         }
@@ -334,9 +373,8 @@ function analyzeFunctionInterface(document, functionName) {
                 trimmed.length === 0 || trimmed.startsWith('.')) {
                 continue;
             }
-            // Skip labels but don't stop at them
-            if (trimmed.match(/^[a-zA-Z0-9_.]+:\s*$/)) {
-                continue;
+            if (ANY_LABEL_RE.test(trimmed)) {
+                break;
             }
             // Stop at control flow (jumps, calls) but NOT at common return-prep instructions
             const instr = trimmed.split(/\s+/)[0].toLowerCase();
@@ -757,7 +795,7 @@ class RegisterStateProvider {
         this.stateBefore = line > 0 ? analyzeRegisters(document, line - 1) : {
             registers: {},
             memory: {},
-            stack: { items: [], offset: 0 },
+            stack: { items: [], offset: 0, frameBytes: 0 },
             flags: {},
             fpuStack: { stack: Array(8).fill({ type: 'unknown' }), top: 0, statusWord: {} }
         };
@@ -825,18 +863,38 @@ class RegisterStateProvider {
                     : 'Flags';
                 categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Expanded, 'category'));
             }
-            // Stack
-            if (this.stateAfter.stack.items.length > 0 || this.stateBefore.stack.items.length > 0) {
-                const beforeCount = this.stateBefore.stack.items.length;
-                const afterCount = this.stateAfter.stack.items.length;
-                const label = beforeCount !== afterCount
-                    ? `Stack (${beforeCount} => ${afterCount} items)`
-                    : `Stack (${afterCount} items)`;
+            // Stack: show when there are pushed items or %rbp/%rsp-relative frame slots
+            const isFrameSlotAddr = (a) => a.includes('%rbp') || a.includes('%rsp');
+            const frameSlotCount = Object.keys(this.stateAfter.memory).filter(isFrameSlotAddr).length;
+            const beforeFrameSlotCount = Object.keys(this.stateBefore.memory).filter(isFrameSlotAddr).length;
+            if (this.stateAfter.stack.items.length > 0 || this.stateBefore.stack.items.length > 0 ||
+                frameSlotCount > 0 || beforeFrameSlotCount > 0) {
+                // Count real push/pop items (exclude frame-reservation sentinel)
+                const beforePushCount = this.stateBefore.stack.items.length;
+                const afterPushCount = this.stateAfter.stack.items.length;
+                const frameChangedCount = Object.keys(this.stateAfter.memory)
+                    .filter(isFrameSlotAddr)
+                    .filter(addr => {
+                    const bv = this.stateBefore.memory[addr];
+                    const av = this.stateAfter.memory[addr];
+                    return !bv || formatValue(bv) !== formatValue(av);
+                }).length;
+                const parts = [];
+                if (afterPushCount > 0 || beforePushCount > 0) {
+                    parts.push(beforePushCount !== afterPushCount
+                        ? `${beforePushCount} => ${afterPushCount} pushed`
+                        : `${afterPushCount} pushed`);
+                }
+                if (frameSlotCount > 0) {
+                    parts.push(`${frameSlotCount} local${frameSlotCount !== 1 ? 's' : ''}${frameChangedCount > 0 ? ` (${frameChangedCount} changed)` : ''}`);
+                }
+                const label = `Stack${parts.length > 0 ? ` (${parts.join(', ')})` : ''}`;
                 categories.push(new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.Expanded, 'category'));
             }
             // Memory
-            const memoryCount = Object.keys(this.stateAfter.memory).length;
-            const beforeMemoryCount = Object.keys(this.stateBefore.memory).length;
+            const isFrameSlot = (addr) => addr.includes('%rbp') || addr.includes('%rsp');
+            const memoryCount = Object.keys(this.stateAfter.memory).filter(a => !isFrameSlot(a)).length;
+            const beforeMemoryCount = Object.keys(this.stateBefore.memory).filter(a => !isFrameSlot(a)).length;
             if (memoryCount > 0 || beforeMemoryCount > 0) {
                 const changedCount = changes.memory.length;
                 const label = changedCount > 0
@@ -960,6 +1018,38 @@ class RegisterStateProvider {
                         const item = new RegisterTreeItem(label, vscode.TreeItemCollapsibleState.None, 'stack');
                         item.iconPath = new vscode.ThemeIcon('symbol-array');
                         items.push(item);
+                    }
+                }
+                // Local variables
+                // %rbp-relative and %rsp-relative memory locations written by mov instructions
+                const frameSlots = Object.entries(this.stateAfter.memory)
+                    .filter(([addr]) => addr.includes('%rbp') || addr.includes('%rsp'))
+                    .sort(([a], [b]) => a.localeCompare(b));
+                if (frameSlots.length > 0) {
+                    // Divider showing reserverd frame size, or separator w/o explicit sub $n, %rsp seen
+                    const fb = this.stateAfter.stack.frameBytes;
+                    const divider = fb > 0
+                        ? `────────── ${fb} bytes ──────────`
+                        : `──────────────────────────────`;
+                    const divItem = new RegisterTreeItem(divider, vscode.TreeItemCollapsibleState.None, 'stack-header');
+                    divItem.iconPath = new vscode.ThemeIcon('fold-down');
+                    items.push(divItem);
+                    for (const [addr, afterVal] of frameSlots) {
+                        const beforeVal = this.stateBefore.memory[addr];
+                        const changed = !beforeVal || formatValue(beforeVal) !== formatValue(afterVal);
+                        if (changed && beforeVal) {
+                            const beforeItem = new RegisterTreeItem(`${addr}: ${formatValue(beforeVal)}`, vscode.TreeItemCollapsibleState.None, 'stack');
+                            beforeItem.iconPath = new vscode.ThemeIcon('symbol-variable', new vscode.ThemeColor('charts.yellow'));
+                            items.push(beforeItem);
+                            const afterItem = new RegisterTreeItem(`   ⮕ ${formatValue(afterVal)}`, vscode.TreeItemCollapsibleState.None, 'memory-after');
+                            afterItem.iconPath = new vscode.ThemeIcon('arrow-small-right', new vscode.ThemeColor('charts.yellow'));
+                            items.push(afterItem);
+                        }
+                        else {
+                            const item = new RegisterTreeItem(`${addr}: ${formatValue(afterVal)}`, vscode.TreeItemCollapsibleState.None, 'stack');
+                            item.iconPath = new vscode.ThemeIcon('symbol-variable', changed ? new vscode.ThemeIcon('charts.yellow') : undefined);
+                            items.push(item);
+                        }
                     }
                 }
             }
@@ -1289,7 +1379,7 @@ function createHoverProvider() {
                     const stateBefore = position.line > 0 ? analyzeRegisters(document, position.line - 1) : {
                         registers: {},
                         memory: {},
-                        stack: { items: [], offset: 0 },
+                        stack: { items: [], offset: 0, frameBytes: 0 },
                         flags: {},
                         fpuStack: { stack: Array(8).fill({ type: 'unknown' }), top: 0, statusWord: {} }
                     };
@@ -1457,7 +1547,25 @@ function formatFunctionInfo(info) {
     lines.push(`*Lines ${info.startLine + 1}-${info.endLine + 1}*`);
     return lines;
 }
+/**
+ * Evaluates a binary operation on two register values.
+ *
+ * Constructs a binary node and attempts to simplify immediately.
+ * Simplification is applied bottom-up on every construction to minimize symbolic expression tree size.
+ * Rules applied in order:
+ *  1. Both-immediate folding: fully evaluates to a number
+ *  2. Identity / absorption: ie x * 1, x * 0, x | 0 -> x, x ^ 0 -> x, x << 0 -> x
+ *  3. Additive identity propogation: Pulls an immediate addend out of a level of +/- nesting and
+ *      combine it with another immediate on the same side so the tree shrinks
+ *
+ * Result is recursively passed through evaluateBinary to continue collapsing.
+ * @param op The binary operator.
+ * @param left The left operand.
+ * @param right The right operand.
+ * @returns The result of the operation.
+ */
 function evaluateBinary(op, left, right) {
+    // Rule 1: Both are concrete immediates
     if (left.type === 'immediate' && right.type === 'immediate') {
         let result;
         switch (op) {
@@ -1489,13 +1597,112 @@ function evaluateBinary(op, left, right) {
         }
         return { type: 'immediate', value: result };
     }
+    const imm = (v) => ({ type: 'immediate', value: v });
+    // Rule 2: identity and absorption
+    if (right.type === 'immediate') {
+        const c = right.value;
+        if ((op === '+' || op === '-') && c === 0)
+            return left;
+        if (op === '*') {
+            if (c === 1)
+                return left;
+            if (c === 0)
+                return imm(0);
+        }
+        if (op === '&' && c === 0)
+            return imm(0);
+        if ((op === '|' || op === '^') && c === 0)
+            return left;
+        if ((op === '<<' || op === '>>') && c === 0)
+            return left;
+    }
+    if (left.type === 'immediate') {
+        const c = left.value;
+        if (op === '+' && c === 0)
+            return right;
+        if (op === '*') {
+            if (c === 1)
+                return right;
+            if (c === 0)
+                return imm(0);
+        }
+        if (op === '&' && c === 0)
+            return imm(0);
+        if ((op === '|' || op === '^') && c === 0)
+            return right;
+    }
+    // Rule 3: additive constant propogation
+    // Only attempt for + and - at outer level, and only when inner node is also a binary + or -.
+    // Keeps logic explicit, avoids touching other things
+    if (op === '+' || op === '-') {
+        // Left is a binary +/- node.
+        if (left.type === 'binary' && (left.op === '+' || left.op === '-') && right.type === 'immediate') {
+            const C2 = right.value;
+            if (left.right.type === 'immediate') {
+                const inner = left.left;
+                const C1 = left.right.value;
+                // (inner + C1) + C2 = inner + (C1 + C2)
+                // (inner + C1) - C2 = inner + (C1 - C2)  [may become inner - |diff|]
+                if (left.op === '+') {
+                    const combined = op === '+' ? C1 + C2 : C1 - C2;
+                    return evaluateBinary(combined >= 0 ? '+' : '-', inner, imm(Math.abs(combined)));
+                }
+                // (inner - C1) + C2 = inner + (C2 - C1)  or  inner - (C1 - C2)
+                // (inner - C1) - C2 = inner - (C1 + C2)
+                if (left.op === '-') {
+                    const combined = op === '+' ? C2 - C1 : -(C1 + C2);
+                    return evaluateBinary(combined >= 0 ? '+' : '-', inner, imm(Math.abs(combined)));
+                }
+            }
+            // Sub-case B: (C1 + inner) OP C2 = inner OP combined
+            if (left.left.type === 'immediate' && left.op === '+') {
+                const C1 = left.left.value;
+                const inner = left.right;
+                const combined = op === '+' ? C1 + C2 : C1 - C2;
+                return evaluateBinary(combined >= 0 ? '+' : '-', inner, imm(Math.abs(combined)));
+            }
+        }
+        // Right is a binary +/- node
+        if (right.type === 'binary' &&
+            (right.op === '+' || right.op === '-') &&
+            left.type === 'immediate') {
+            const C1 = left.value;
+            // Sub-case C: C1 + (inner + C2)  =  inner + (C1 + C2)
+            //              C1 + (inner - C2)  =  inner + (C1 - C2)
+            if (op === '+' && right.right.type === 'immediate') {
+                const inner = right.left;
+                const C2 = right.right.value;
+                const combined = right.op === '+' ? C1 + C2 : C1 - C2;
+                return evaluateBinary(combined >= 0 ? '+' : '-', inner, imm(Math.abs(combined)));
+            }
+            // Sub-case D: C1 - (inner + C2)  =  (C1 - C2) - inner
+            //              C1 - (inner - C2)  =  (C1 + C2) - inner
+            if (op === '-' && right.right.type === 'immediate') {
+                const inner = right.left;
+                const C2 = right.right.value;
+                const combined = right.op === '+' ? C1 - C2 : C1 + C2;
+                // combined - inner: use evaluateBinary so further identities apply
+                return evaluateBinary('-', imm(combined), inner);
+            }
+        }
+    }
     return { type: 'binary', op, left, right };
+}
+// Remove all %rbp/%rsp-relative memory entries from state
+// Called when %rbp is clobbered (pop %rbp, leave) so stale frame-slot
+// entries don't persist after frame is torn down
+function cleanFrameSlots(state) {
+    for (const key of Object.keys(state.memory)) {
+        if (key.includes('%rbp') || key.includes('%rsp')) {
+            delete state.memory[key];
+        }
+    }
 }
 function analyzeRegisters(document, targetLine) {
     const state = {
         registers: {},
         memory: {},
-        stack: { items: [], offset: 0 },
+        stack: { items: [], offset: 0, frameBytes: 0 },
         flags: {},
         fpuStack: {
             stack: new Array(8).fill({ type: 'unknown' }),
@@ -1503,10 +1710,11 @@ function analyzeRegisters(document, targetLine) {
             statusWord: {}
         }
     };
+    const FUNC_ENTRY_LABEL_RE = /^[a-zA-z_][a-zA-z0-9_.]*:\s*$/;
     let functionStart = 0;
     for (let i = targetLine; i >= 0; i--) {
         const line = document.lineAt(i).text.trim();
-        if (line.match(/^[a-zA-Z_][a-zA-Z0-9_]*:\s*$/)) {
+        if (FUNC_ENTRY_LABEL_RE.test(line)) {
             functionStart = i + 1;
             break;
         }
@@ -1534,9 +1742,19 @@ function analyzeRegisters(document, targetLine) {
         if (instr.match(/^push[bwlq]?$/)) {
             // push src - decrements %rsp and stores value
             if (operands.length === 1) {
-                const src = parseOperand(operands[0]);
+                const parsedSrc = parseOperand(operands[0]);
+                let src;
+                if (parsedSrc.type === 'register') {
+                    const tracked = state.registers[parsedSrc.reg];
+                    src = (!tracked || tracked.type === 'unknown')
+                        ? { type: 'symbolic', expr: parsedSrc.reg }
+                        : tracked;
+                }
+                else {
+                    src = resolveValue(state, parsedSrc);
+                }
                 state.stack.items.push(src);
-                state.stack.offset -= 8; // Assuming 64-bit pushes
+                state.stack.offset -= 8; // Assume 64-bit pushes
                 // Update %rsp
                 const rspVal = state.registers['%rsp'] || { type: 'symbolic', expr: '%rsp' };
                 state.registers['%rsp'] = evaluateBinary('-', rspVal, { type: 'immediate', value: 8 });
@@ -1559,10 +1777,83 @@ function analyzeRegisters(document, targetLine) {
             }
         }
         // Handle memory operations
+        else if (instr.match(/^movz(b[wlq]|w[lq])$/) && operands.length === 2) {
+            // 32-bit dest is implicit zero-extend to 64-bit because Intel logic
+            const srcBits = instr[4] === 'b' ? 8 : 16;
+            const srcMask = srcBits === 8 ? 0xFF : 0xFFFF;
+            const rawDestReg = operands[1];
+            const src = resolveValue(state, parseOperand(operands[0]));
+            if (src.type === 'immediate') {
+                const masked = src.value & srcMask;
+                setRegister(state, rawDestReg, { type: 'immediate', value: masked });
+            }
+            else {
+                const srcStr = src.type === 'symbolic' ? src.expr
+                    : src.type === 'register' ? src.reg
+                        : formatValue(src);
+                state.registers[normalizeRegister(rawDestReg)] = { type: 'symbolic', expr: `zext(${srcStr})` };
+            }
+        }
+        else if (instr.match(/^movs(b[wlq]|w[lq])$/) && operands.length === 2) {
+            const srcBitsRaw = instr[4];
+            const srcBits = srcBitsRaw === 'b' ? 8 : srcBitsRaw === 'w' ? 16 : 32;
+            const rawDestReg = operands[1];
+            const src = resolveValue(state, parseOperand(operands[0]));
+            if (src.type === 'immediate') {
+                let signExtended;
+                if (srcBits === 32) {
+                    // Use >>> 0 because JS & goes to signed int32
+                    const masked = src.value >>> 0;
+                    signExtended = (masked & 0x80000000) !== 0
+                        ? masked - 0x100000000
+                        : masked;
+                }
+                else {
+                    const srcMask = srcBits === 8 ? 0xFF : 0xFFFF;
+                    const srcSignBit = srcBits === 8 ? 0x80 : 0x8000;
+                    const masked = src.value & srcMask;
+                    signExtended = (masked & srcSignBit) !== 0
+                        ? masked - (srcSignBit * 2)
+                        : masked;
+                }
+                setRegister(state, rawDestReg, { type: 'immediate', value: signExtended });
+            }
+            else {
+                const srcStr = src.type === 'symbolic' ? src.expr
+                    : src.type === 'register' ? src.reg
+                        : formatValue(src);
+                setRegister(state, rawDestReg, {
+                    type: 'symbolic',
+                    expr: `sext${srcBits}(${srcStr})`
+                });
+            }
+        }
+        else if (instr === 'movsxd' && operands.length === 2) {
+            // Intel-syntax name, GAS-alias for movslq (32 to 64). Some compilers emit 'movsxd' even in AT&T
+            const rawDestReg = operands[1];
+            const src = resolveValue(state, parseOperand(operands[0]));
+            if (src.type === 'immediate') {
+                // >>> 0 problem still here
+                const masked = src.value >>> 0;
+                const signExtended = (masked & 0x80000000) !== 0
+                    ? masked - 0x100000000
+                    : masked;
+                setRegister(state, rawDestReg, { type: 'immediate', value: signExtended });
+            }
+            else {
+                const srcStr = src.type === 'symbolic' ? src.expr
+                    : src.type === 'register' ? src.reg
+                        : formatValue(src);
+                setRegister(state, rawDestReg, {
+                    type: 'symbolic',
+                    expr: `sext32(${srcStr})`
+                });
+            }
+        }
         else if (instr.startsWith('mov') && !instr.match(/^mov(aps|ups|apd|upd|ss|sd|dqa|dqu)$/)) {
             // Memory store: mov src, (%reg) or mov src, offset(%reg)
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const dest = operands[1];
                 // Check if destination is memory
                 const memMatch = dest.match(/^(-?\d+)?\((%[a-z0-9]+)(?:,\s*(%[a-z0-9]+)(?:,\s*([1248]))?)?\)$/);
@@ -1582,7 +1873,12 @@ function analyzeRegisters(document, targetLine) {
                         state.memory[memKey] = src;
                     }
                     else {
-                        let addrExpr = formatValue(baseVal);
+                        // Use register name directly for %rbp/%rsp-relative addresses
+                        // so they read as %rbp - 8 rather than some expanded form
+                        // Expand for others
+                        const isFrameBase = baseReg === '%rbp' || baseReg === '%rsp';
+                        const baseStr = isFrameBase ? baseReg : formatValue(baseVal);
+                        let addrExpr = baseStr;
                         if (offset !== 0) {
                             addrExpr += offset > 0 ? ` + ${offset}` : ` - ${-offset}`;
                         }
@@ -1631,8 +1927,8 @@ function analyzeRegisters(document, targetLine) {
         // Handle comparison and set flags
         else if (instr.match(/^cmp[bwlq]?$/)) {
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
-                const dest = parseOperand(operands[1]);
+                const src = resolveValue(state, parseOperand(operands[0]));
+                const dest = resolveValue(state, parseOperand(operands[1]));
                 if (src.type === 'immediate' && dest.type === 'immediate') {
                     const result = dest.value - src.value;
                     state.flags.ZF = result === 0 ? '1' : '0';
@@ -1673,17 +1969,22 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^add[bwlq]?$/)) {
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(rawDestReg);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
-                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
-                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
-                    const signBit = 1 << (bits - 1);
+                    const bits = instrBits(instr);
+                    const maxVal = bitMask(bits);
+                    const signBit = signBitMask(bits);
                     const result = currentVal.value + src.value;
-                    const maskedResult = result & maxVal;
+                    const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
                     setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
+                    // addq $n, %rsp: stack dealloc. Reduce tracked frame size
+                    if (destReg === '%rsp' && src.type === 'immediate') {
+                        state.stack.offset += src.value;
+                        state.stack.frameBytes = Math.max(0, state.stack.frameBytes - src.value);
+                    }
                     state.flags.ZF = maskedResult === 0 ? '1' : '0';
                     state.flags.SF = (maskedResult & signBit) ? '1' : '0';
                     state.flags.CF = result > maxVal ? '1' : '0';
@@ -1695,6 +1996,11 @@ function analyzeRegisters(document, targetLine) {
                 }
                 else {
                     setRegister(state, rawDestReg, evaluateBinary('+', currentVal, src));
+                    // addq $n, %rsp: stack dealloc. Pop frame-reservation sentinel if present
+                    if (destReg === '%rsp' && src.type === 'immediate') {
+                        state.stack.offset += src.value;
+                        state.stack.frameBytes = Math.max(0, state.stack.frameBytes - src.value);
+                    }
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = 'carry';
@@ -1704,20 +2010,25 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^sub[bwlq]?$/)) {
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
-                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
-                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
-                    const signBit = 1 << (bits - 1);
+                    const bits = instrBits(instr);
+                    const maxVal = bitMask(bits);
+                    const signBit = signBitMask(bits);
                     const result = currentVal.value - src.value;
-                    const maskedResult = result & maxVal;
+                    const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
                     setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
+                    // subq $n, %rsp: stack alloc. Push sentinel entry to show reserved space explicitly
+                    if (destReg === '%rsp' && src.type === 'immediate') {
+                        state.stack.offset -= src.value;
+                        state.stack.frameBytes += src.value;
+                    }
                     state.flags.ZF = maskedResult === 0 ? '1' : '0';
                     state.flags.SF = (maskedResult & signBit) ? '1' : '0';
-                    state.flags.CF = currentVal.value < src.value ? '1' : '0';
+                    state.flags.CF = (currentVal.value >>> 0) < (src.value >>> 0) ? '1' : '0';
                     const srcSign = src.value & signBit;
                     const destSign = currentVal.value & signBit;
                     const resultSign = maskedResult & signBit;
@@ -1726,6 +2037,11 @@ function analyzeRegisters(document, targetLine) {
                 }
                 else {
                     setRegister(state, rawDestReg, evaluateBinary('-', currentVal, src));
+                    // subq $n, %rsp: stack alloc. Push sentinel entry to show reserved space explicitly
+                    if (destReg === '%rsp' && src.type === 'immediate') {
+                        state.stack.offset -= src.value;
+                        state.stack.frameBytes += src.value;
+                    }
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = 'borrow';
@@ -1737,7 +2053,7 @@ function analyzeRegisters(document, targetLine) {
             if (operands.length === 2) {
                 const rawDestReg = operands[1];
                 const src = operands[0];
-                const complexMatch = src.match(/^(-?\d+)?\((%[a-z0-9]+)(?:,\s*(%a-z0-9+)(?:,\s*([1248]))?)?\)$/);
+                const complexMatch = src.match(/^(-?\d+)?\((%[a-z0-9]+)(?:,\s*(%[a-z0-9]+)(?:,\s*([1248]))?)?\)$/);
                 if (complexMatch) {
                     const offset = complexMatch[1] ? parseInt(complexMatch[1]) : 0;
                     const baseReg = normalizeRegister(complexMatch[2]);
@@ -1774,9 +2090,8 @@ function analyzeRegisters(document, targetLine) {
             }
         }
         else if (instr.startsWith('add')) {
-            // add src, dest - dest = dest + src
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
@@ -1787,9 +2102,8 @@ function analyzeRegisters(document, targetLine) {
             }
         }
         else if (instr.startsWith('sub')) {
-            // sub src, dest - dest = dest - src
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
@@ -1801,10 +2115,10 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^(imul)[bwlq]?$/)) {
             if (operands.length === 1) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const raxVal = state.registers['%rax'] || { type: 'unknown' };
                 if (raxVal.type === 'immediate' && src.type === 'immediate') {
-                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
+                    const bits = instrBits(instr);
                     const result = BigInt(raxVal.value) * BigInt(src.value);
                     const lowMask = (1n << BigInt(bits)) - 1n;
                     const low = Number(result & lowMask);
@@ -1823,14 +2137,15 @@ function analyzeRegisters(document, targetLine) {
                 }
             }
             else if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
-                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
-                    const result = currentVal.value * src.value;
-                    const maskedResult = result & ((1 << bits) - 1);
+                    const bits = instrBits(instr);
+                    const maxVal = bitMask(bits);
+                    const result = Number(BigInt(currentVal.value) * BigInt(src.value));
+                    const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
                     setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
                     state.flags.CF = result !== maskedResult ? '1' : '0';
                     state.flags.OF = result !== maskedResult ? '1' : '0';
@@ -1842,13 +2157,14 @@ function analyzeRegisters(document, targetLine) {
                 }
             }
             else if (operands.length === 3) {
-                const src1 = parseOperand(operands[0]);
-                const src2 = parseOperand(operands[1]);
+                const src1 = resolveValue(state, parseOperand(operands[0]));
+                const src2 = resolveValue(state, parseOperand(operands[1]));
                 const rawDestReg = operands[2];
                 if (src1.type === 'immediate' && src2.type === 'immediate') {
-                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
-                    const result = src1.value * src2.value;
-                    const maskedResult = result & ((1 << bits) - 1);
+                    const bits = instrBits(instr);
+                    const maxVal = bitMask(bits);
+                    const result = Number(BigInt(src1.value) * BigInt(src2.value));
+                    const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
                     setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
                     state.flags.CF = result !== maskedResult ? '1' : '0';
                     state.flags.OF = result !== maskedResult ? '1' : '0';
@@ -1947,11 +2263,11 @@ function analyzeRegisters(document, targetLine) {
                 const destReg = normalizeRegister(operands[0]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate') {
-                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
-                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
-                    const signBit = 1 << (bits - 1);
+                    const bits = instrBits(instr);
+                    const maxVal = bitMask(bits);
+                    const signBit = signBitMask(bits);
                     const result = currentVal.value + 1;
-                    const maskedResult = result & maxVal;
+                    const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
                     setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
                     state.flags.ZF = maskedResult === 0 ? '1' : '0';
                     state.flags.SF = (maskedResult & signBit) ? '1' : '0';
@@ -1972,11 +2288,11 @@ function analyzeRegisters(document, targetLine) {
                 const destReg = normalizeRegister(operands[0]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate') {
-                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
-                    const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
-                    const signBit = 1 << (bits - 1);
+                    const bits = instrBits(instr);
+                    const maxVal = bitMask(bits);
+                    const signBit = signBitMask(bits);
                     const result = currentVal.value - 1;
-                    const maskedResult = result & maxVal;
+                    const maskedResult = bits === 32 ? (result >>> 0) & maxVal : result & maxVal;
                     setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
                     state.flags.ZF = maskedResult === 0 ? '1' : '0';
                     state.flags.SF = (maskedResult & signBit) ? '1' : '0';
@@ -2000,7 +2316,7 @@ function analyzeRegisters(document, targetLine) {
                     const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
                     const maxVal = bits === 64 ? Number.MAX_SAFE_INTEGER : (1 << bits) - 1;
                     const signBit = 1 << (bits - 1);
-                    const result = (-currentVal.value) & maxVal;
+                    const result = bits === 32 ? ((-currentVal.value) >>> 0) & maxVal : (-currentVal.value) & maxVal;
                     setRegister(state, rawDestReg, { type: 'immediate', value: result });
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = (result & signBit) ? '1' : '0';
@@ -2018,7 +2334,7 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^(and)[bwlq]?$/)) {
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
@@ -2052,7 +2368,7 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.match(/^(or)[bwlq]?$/)) {
             // or src, dest - dest = dest | src
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
@@ -2085,11 +2401,12 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.startsWith('xor')) {
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
-                if (src.type === 'register' && src.reg === destReg) {
+                const rawSrcParse = parseOperand(operands[0]);
+                if (rawSrcParse.type === 'register' && rawSrcParse.reg === destReg) {
                     setRegister(state, rawDestReg, { type: 'immediate', value: 0 });
                     state.flags.ZF = '1';
                     state.flags.SF = '0';
@@ -2098,18 +2415,16 @@ function analyzeRegisters(document, targetLine) {
                     state.flags.PF = '1';
                 }
                 else if (currentVal.type === 'immediate' && src.type === 'immediate') {
-                    const result = currentVal.value ^ src.value;
-                    const bits = instr.endsWith('b') ? 8 : instr.endsWith('w') ? 16 : instr.endsWith('l') ? 32 : 64;
-                    const signBit = 1 << (bits - 1);
-                    const mask = bits === 64 ? -1 : (1 << bits) - 1;
-                    const maskedResult = result & mask;
-                    setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
-                    state.flags.ZF = maskedResult === 0 ? '1' : '0';
-                    state.flags.SF = (maskedResult & signBit) ? '1' : '0';
+                    const bits = instrBits(instr);
+                    const signBit = signBitMask(bits);
+                    const result = bits === 32 ? (currentVal.value ^ src.value) >>> 0 : (currentVal.value ^ src.value);
+                    setRegister(state, rawDestReg, { type: 'immediate', value: result });
+                    state.flags.ZF = result === 0 ? '1' : '0';
+                    state.flags.SF = (result & signBit) ? '1' : '0';
                     // Always cleared
                     state.flags.CF = '0';
                     state.flags.OF = '0';
-                    const lowByte = maskedResult & 0xFF;
+                    const lowByte = result & 0xFF;
                     let count = 0;
                     for (let i = 0; i < 8; i++) {
                         if (lowByte & (1 << i))
@@ -2129,18 +2444,22 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.startsWith('shl') || instr.startsWith('sal')) {
             // shl src, dest - dest = dest << src
             if (operands.length === 2) {
-                const count = parseOperand(operands[0]);
+                const count = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate' && count.type === 'immediate') {
-                    const bits = 64;
+                    const bits = instrBits(instr);
                     const shiftCount = count.value & (bits - 1);
-                    const result = (currentVal.value << shiftCount) >>> 0;
+                    const result = bits === 32
+                        ? (currentVal.value << shiftCount) >>> 0
+                        : (currentVal.value * Math.pow(2, shiftCount)); // Avoid 32-bit truncation for 64-bit
                     setRegister(state, rawDestReg, { type: 'immediate', value: result });
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = result < 0 ? '1' : '0';
-                    state.flags.CF = shiftCount > 0 ? ((currentVal.value >> (bits - shiftCount)) & 1).toString() ? '1' : '0' : 'unchanged';
+                    state.flags.CF = shiftCount > 0
+                        ? ((currentVal.value >>> (bits - shiftCount)) & 1) ? '1' : '0'
+                        : 'unchanged';
                 }
                 else {
                     setRegister(state, rawDestReg, evaluateBinary('<<', currentVal, count));
@@ -2153,18 +2472,20 @@ function analyzeRegisters(document, targetLine) {
         else if (instr.startsWith('shr')) {
             // shr src, dest - dest = dest >> src
             if (operands.length === 2) {
-                const count = parseOperand(operands[0]);
+                const count = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate' && count.type === 'immediate') {
-                    const bits = 64;
+                    const bits = instrBits(instr);
                     const shiftCount = count.value & (bits - 1);
                     const result = (currentVal.value >>> shiftCount);
                     setRegister(state, rawDestReg, { type: 'immediate', value: result });
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = '0'; // Always 0 for logical shift
-                    state.flags.CF = shiftCount > 0 ? ((currentVal.value >> (shiftCount - 1)) & 1) ? '1' : '0' : 'unchanged';
+                    state.flags.CF = shiftCount > 0
+                        ? ((currentVal.value >>> (shiftCount - 1)) & 1) ? '1' : '0'
+                        : 'unchanged';
                 }
                 else {
                     setRegister(state, rawDestReg, evaluateBinary('>>', currentVal, count));
@@ -2176,19 +2497,21 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.startsWith('sar')) {
             if (operands.length === 2) {
-                const count = parseOperand(operands[0]);
+                const count = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate' && count.type === 'immediate') {
-                    const bits = 64;
+                    const bits = instrBits(instr);
                     const shiftCount = count.value & (bits - 1);
                     // Arithmetic shift preserves sign bit
                     const result = currentVal.value >> shiftCount;
                     setRegister(state, rawDestReg, { type: 'immediate', value: result });
                     state.flags.ZF = result === 0 ? '1' : '0';
                     state.flags.SF = result < 0 ? '1' : '0';
-                    state.flags.CF = shiftCount > 0 ? ((currentVal.value >> (shiftCount - 1)) & 1) ? '1' : '0' : 'unchanged';
+                    state.flags.CF = shiftCount > 0
+                        ? ((currentVal.value >>> (shiftCount - 1)) & 1) ? '1' : '0'
+                        : 'unchanged';
                 }
                 else {
                     setRegister(state, rawDestReg, evaluateBinary('>>', currentVal, count));
@@ -2220,7 +2543,7 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^cmov(e|ne|g|ge|l|le|a|ae|b|be|c|nc|o|no|s|ns|p|np|pe|po|z|nz)(q|l|w)?$/)) {
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
@@ -2270,7 +2593,7 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^(rol|ror)[bwlq]?$/)) {
             if (operands.length === 2) {
-                const count = parseOperand(operands[0]);
+                const count = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
@@ -2676,33 +2999,56 @@ function analyzeRegisters(document, targetLine) {
                 }
             }
         }
-        else if (instr.match(/^movz(b|w)l$/)) {
-            if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
-                const rawDestReg = operands[1];
-                if (src.type === 'immediate') {
-                    const srcSize = instr.includes('b') ? 8 : 16;
-                    const mask = (1 << srcSize) - 1;
-                    setRegister(state, rawDestReg, { type: 'immediate', value: src.value & mask });
-                }
-                else {
-                    setRegister(state, rawDestReg, {
-                        type: 'symbolic',
-                        expr: `zero_extend_to_32(${formatValue(src)})`
-                    });
-                }
-            }
-        }
         else if (instr.match(/^xchg[bwlq]?$/)) {
             if (operands.length === 2) {
-                const op1 = operands[0];
-                const op2 = operands[1];
-                if (op1.startsWith('%') && op2.startsWith('%')) {
-                    const reg1 = normalizeRegister(op1);
-                    const reg2 = normalizeRegister(op2);
-                    const temp = state.registers[reg1];
-                    state.registers[reg1] = state.registers[reg2] || { type: 'unknown' };
-                    state.registers[reg2] = temp || { type: 'unknown' };
+                const isReg0 = operands[0].startsWith('%');
+                const isReg1 = operands[1].startsWith('%');
+                if (isReg0 && isReg1) {
+                    const val0 = resolveValue(state, parseOperand(operands[0]));
+                    const val1 = resolveValue(state, parseOperand(operands[1]));
+                    setRegister(state, operands[0], val1);
+                    setRegister(state, operands[1], val0);
+                }
+                else {
+                    const regOp = isReg0 ? operands[0] : operands[1];
+                    const memOp = isReg0 ? operands[1] : operands[0];
+                    // Resolve memory address
+                    const memMatch = memOp.match(/^(-?\d+)?\((%[a-z0-9]+)(?:,\s*(%[a-z0-9]+)(?:,\s*([1248]))?)?\)$/);
+                    if (memMatch) {
+                        const offset = memMatch[1] ? parseInt(memMatch[1]) : 0;
+                        const baseReg = normalizeRegister(memMatch[2]);
+                        const indexReg = memMatch[3] ? normalizeRegister(memMatch[3]) : null;
+                        const scale = memMatch[4] ? parseInt(memMatch[4]) : 1;
+                        const baseVal = state.registers[baseReg] || { type: 'symbolic', expr: baseReg };
+                        const indexVal = indexReg ? (state.registers[indexReg] || { type: 'symbolic', expr: indexReg }) : null;
+                        let memKey;
+                        if (baseVal.type === 'immediate' && (!indexVal || indexVal.type === 'immediate')) {
+                            let addr = baseVal.value + offset;
+                            if (indexVal && indexVal.type === 'immediate') {
+                                addr += indexVal.value * scale;
+                            }
+                            memKey = `0x${addr.toString(16)}`;
+                        }
+                        else {
+                            let addrExpr = formatValue(baseVal);
+                            if (offset !== 0) {
+                                addrExpr += offset > 0 ? ` + ${offset}` : ` - ${-offset}`;
+                            }
+                            if (indexVal) {
+                                addrExpr += scale === 1
+                                    ? ` + ${formatValue(indexVal)}`
+                                    : ` + ${formatValue(indexVal)} * ${scale}`;
+                            }
+                            memKey = addrExpr;
+                        }
+                        const regVal = resolveValue(state, parseOperand(regOp));
+                        const memVal = state.memory[memKey] || { type: 'unknown' };
+                        setRegister(state, regOp, memVal);
+                        state.memory[memKey] = regVal;
+                    }
+                    else {
+                        setRegister(state, regOp, { type: 'unknown' });
+                    }
                 }
             }
         }
@@ -3260,13 +3606,12 @@ function analyzeRegisters(document, targetLine) {
                 });
             }
         }
-        else if (instr.startsWith('not')) {
+        else if (instr.match(/^not[bwlq]?$/)) {
             if (operands.length === 1) {
                 const rawDestReg = operands[0];
-                const destReg = normalizeRegister(operands[0]);
-                const currentVal = state.registers[destReg] || { type: 'unknown' };
+                const currentVal = resolveValue(state, parseOperand(rawDestReg));
+                const bits = instrBits(instr);
                 if (currentVal.type === 'immediate') {
-                    const bits = 64;
                     const mask = (1n << BigInt(bits)) - 1n;
                     const result = Number((~BigInt(currentVal.value)) & mask);
                     setRegister(state, rawDestReg, { type: 'immediate', value: result });
@@ -3381,19 +3726,27 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^adc[bwlq]?$/)) {
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
                     const carryVal = state.flags.CF === '1' ? 1 : state.flags.CF === '0' ? 0 : null;
                     if (carryVal !== null) {
-                        const result = currentVal.value + src.value + carryVal;
-                        setRegister(state, rawDestReg, { type: 'immediate', value: result });
-                        state.flags.ZF = result === 0 ? '1' : '0';
-                        state.flags.SF = result < 0 ? '1' : '0';
-                        state.flags.CF = result > 0xFFFFFFFF ? '1' : '0';
-                        state.flags.OF = 'overflow_check';
+                        const bits = instrBits(instr);
+                        const maxVal = bitMask(bits);
+                        const signBit = signBitMask(bits);
+                        const rawResult = currentVal.value + src.value + carryVal;
+                        const maskedResult = bits === 32 ? (rawResult >>> 0) & maxVal : rawResult & maxVal;
+                        setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
+                        state.flags.ZF = maskedResult === 0 ? '1' : '0';
+                        state.flags.SF = (maskedResult & signBit) ? '1' : '0';
+                        state.flags.CF = rawResult > maxVal ? '1' : '0';
+                        const srcSign = src.value & signBit;
+                        const desgSign = currentVal.value & signBit;
+                        const resultSign = maskedResult & signBit;
+                        state.flags.OF = ((srcSign === desgSign) && (resultSign !== desgSign)) ? '1' : '0';
+                        state.flags.AF = ((currentVal.value & 0xF) + (src.value & 0xF) + carryVal) > 0xF ? '1' : '0';
                     }
                     else {
                         setRegister(state, rawDestReg, {
@@ -3403,6 +3756,7 @@ function analyzeRegisters(document, targetLine) {
                         state.flags.ZF = 'result == 0';
                         state.flags.SF = 'result < 0';
                         state.flags.CF = 'carry';
+                        state.flags.OF = 'overflow_check';
                     }
                 }
                 else {
@@ -3418,19 +3772,27 @@ function analyzeRegisters(document, targetLine) {
         }
         else if (instr.match(/^sbb[bwlq]?$/)) {
             if (operands.length === 2) {
-                const src = parseOperand(operands[0]);
+                const src = resolveValue(state, parseOperand(operands[0]));
                 const rawDestReg = operands[1];
                 const destReg = normalizeRegister(operands[1]);
                 const currentVal = state.registers[destReg] || { type: 'unknown' };
                 if (currentVal.type === 'immediate' && src.type === 'immediate') {
                     const carryVal = state.flags.CF === '1' ? 1 : state.flags.CF === '0' ? 0 : null;
                     if (carryVal !== null) {
-                        const result = currentVal.value - src.value - carryVal;
-                        setRegister(state, rawDestReg, { type: 'immediate', value: result });
-                        state.flags.ZF = result === 0 ? '1' : '0';
-                        state.flags.SF = result < 0 ? '1' : '0';
-                        state.flags.CF = result < 0 ? '1' : '0';
-                        state.flags.OF = 'overflow_check';
+                        const bits = instrBits(instr);
+                        const maxVal = bitMask(bits);
+                        const signBit = signBitMask(bits);
+                        const rawResult = currentVal.value - src.value - carryVal;
+                        const maskedResult = bits === 32 ? (rawResult >>> 0) & maxVal : rawResult & maxVal;
+                        setRegister(state, rawDestReg, { type: 'immediate', value: maskedResult });
+                        state.flags.ZF = maskedResult === 0 ? '1' : '0';
+                        state.flags.SF = (maskedResult & signBit) ? '1' : '0';
+                        state.flags.CF = rawResult < 0 ? '1' : '0';
+                        const srcSign = src.value & signBit;
+                        const destSign = currentVal.value & signBit;
+                        const resultSign = maskedResult & signBit;
+                        state.flags.OF = ((srcSign !== destSign) && (resultSign !== destSign)) ? '1' : '0';
+                        state.flags.AF = ((currentVal.value & 0xF) - (src.value & 0xF) - carryVal) < 0 ? '1' : '0';
                     }
                     else {
                         setRegister(state, rawDestReg, {
@@ -3440,6 +3802,7 @@ function analyzeRegisters(document, targetLine) {
                         state.flags.ZF = 'result == 0';
                         state.flags.SF = 'result < 0';
                         state.flags.CF = 'borrow';
+                        state.flags.OF = 'overflow_check';
                     }
                 }
                 else {
@@ -3450,6 +3813,7 @@ function analyzeRegisters(document, targetLine) {
                     state.flags.ZF = 'result == 0';
                     state.flags.SF = 'result < 0';
                     state.flags.CF = 'borrow';
+                    state.flags.OF = 'overflow_check';
                 }
             }
         }

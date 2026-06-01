@@ -58,6 +58,7 @@ export interface MemoryState {
 export interface StackState {
     items: RegisterValue[];
     offset: number; // Offset from initial %rsp
+    frameBytes: number; // Bytes reserved by initial subq $n, %rsp (0 if none)
 }
 
 export interface FlagState {

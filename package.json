@@ -2,7 +2,7 @@
     "name": "gas-x86-64-asm",
     "displayName": "GAS x86-64 Assembly (AT&T)",
     "description": "Syntax highlighting for GNU Assembler (GAS) x86-64 assembly language using AT&T syntax.",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "publisher": "yiandou",
     "engines": {
         "vscode": "^1.75.0"
@@ -101,12 +101,12 @@
         "publish": "vsce publish"
     },
     "devDependencies": {
+        "@types/node": "^16.18.126",
         "@types/vscode": "^1.75.0",
-        "@types/node": "^16.x",
         "@typescript-eslint/eslint-plugin": "^5.45.0",
         "@typescript-eslint/parser": "^5.45.0",
+        "@vscode/vsce": "^3.7.0",
         "eslint": "^8.28.0",
-        "typescript": "^4.9.3",
-        "@vscode/vsce": "^3.7.0"
+        "typescript": "^4.9.3"
     }
 }

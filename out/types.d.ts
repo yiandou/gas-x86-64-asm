@@ -64,6 +64,7 @@ export interface MemoryState {
 export interface StackState {
     items: RegisterValue[];
     offset: number;
+    frameBytes: number;
 }
 export interface FlagState {
     ZF?: string;
